@@ -12,7 +12,7 @@
          br-parser-tools/lex
          (prefix-in : br-parser-tools/lex-sre)
          racket/contract
-         (only-in fhir/fhirpath/parser/ast date-lit datetime-lit time-lit))
+         (only-in fhirpath/parser/ast date-lit datetime-lit time-lit))
 
 (provide (contract-out [tokenize (-> input-port? any/c)]))
 

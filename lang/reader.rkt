@@ -1,12 +1,12 @@
 #lang s-exp syntax/module-reader
 
-fhir/fml/base
+fml/base
 
 #:read        fml-read
 #:read-syntax fml-read-syntax
 #:whole-body-readers? #t
 
-(require (only-in fhir/fml/parser/parse parse-fml)
+(require (only-in fml/parser/parse parse-fml)
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in racket/port port->string))
 

@@ -12,9 +12,9 @@
          (prefix-in g: "grammar.rkt")
          "lexer.rkt"
          "ast.rkt"
-         (only-in fhir/fhirpath/parser/ast lower)
+         (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
-         (only-in fhir/cql/error cql-error))
+         (only-in cql/error cql-error))
 
 (provide (contract-out
           [parse-fml (-> string? (or/c ok? err?))]))   ; (ok fml-map) | (err cql-error)
@@ -113,7 +113,7 @@
        [_ (fml-fhirpath ast)])]))
 
 ;; pattern helpers over fhirpath's prefab structs (avoid a hard require cycle on struct names)
-(require (only-in fhir/fhirpath/parser/ast
+(require (only-in fhirpath/parser/ast
                   fp-lit fp-lit? fp-lit-value fp-invoke fp-invoke? fp-invoke-target fp-invoke-name
                   fp-call fp-call? fp-call-target fp-call-name fp-call-args))
 (define-match-expander fp-lit*
@@ -140,7 +140,7 @@
 
 (module+ test
   (require rackunit (only-in fhir/result/result ok-value)
-           (only-in fhir/fhirpath/parser/ast fp-binop fp-invoke fp-lit))
+           (only-in fhirpath/parser/ast fp-binop fp-invoke fp-lit))
   (define m (ok-value (parse-fml #<<EOF
 map "http://x" = "demo"
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" alias QR as source

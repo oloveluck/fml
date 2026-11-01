@@ -7,7 +7,7 @@
 
 (require racket/contract racket/list
          "parser/ast.rkt"
-         (only-in fhir/fhirpath/print fhirpath->string)
+         (only-in fhirpath/print fhirpath->string)
          (only-in fhir/serialize/jsexpr-util drop-false))
 
 (provide (contract-out [fml->structuremap (-> fml-map? hash?)]))
