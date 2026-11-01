@@ -1,0 +1,13 @@
+FHIR Mapping Language (FML) test suite (vendored)
+=================================================
+r5/structure-mapping/* vendored verbatim from:
+  repo:    https://github.com/FHIR/fhir-test-cases
+  path:    r5/structure-mapping/
+  commit:  9f495e8ceb3c0ae81e0b435c4ecdeacfdb293e91
+  fetched: 2026-08-23
+
+manifest.xml lists the executable tests: parse <map>, transform <source> (qr.json), compare to
+<output>. Outputs ending .json run end-to-end in this JSON-only repo; the CDA/.xml-output tests are
+skipped (XML is out of scope repo-wide) and reported as such. The remaining .map files (syntax.map,
+syntaxshort.map, cast.map, whereclause.map, ActivityDefinition.map, qr2patfordates.map) serve as
+parser conformance: they must parse to a StructureMap.
