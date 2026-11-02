@@ -12,16 +12,29 @@
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap fml->structuremap)
          (only-in fml/transform run-map)
-         (only-in cql/error cql-error-string)
+         (only-in cql/error cql-error-string cql-error-diagnostic cql-error-message)
+         (only-in fhir/diagnostic diagnostic diagnostic-loc loc emit-diagnostics format-flag)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
 
 (provide compile-file transform-file)
 
 ;; parse-file : path-string -> fml-map   (or exit 1)
+;; report : diagnostic text -> exit 1   (format from --format)
+(define current-format (make-parameter 'text))
+(define (report d text)
+  (emit-diagnostics (list d) #:format (current-format) #:text-of (lambda (_) text))
+  (exit 1))
+(define (with-source d source)
+  (define l (diagnostic-loc d))
+  (struct-copy diagnostic d [loc (if l (struct-copy loc l [source source]) (loc source #f #f #f #f))]))
+
 (define (parse-file file)
-  (define r (parse-fml (regexp-replace #px"^#lang[^\n]*\n" (file->string file) "")))
-  (unless (ok? r) (eprintf "~a: ~a\n" file (cql-error-string (err-error r))) (exit 1))
+  (define src (regexp-replace #px"^#lang[^\n]*" (file->string file) ""))   ; keep line numbers
+  (define r (parse-fml src #:source file))
+  (unless (ok? r)
+    (define e (err-error r))
+    (report (or (cql-error-diagnostic e) (diagnostic 'fml 'parse 'error (cql-error-message e) (loc file #f #f #f #f))) src))
   (ok-value r))
 
 ;; compile-file : path-string -> void   print the StructureMap JSON
@@ -41,7 +54,8 @@
   (exit 2))
 
 (module+ main
-  (define args (vector->list (current-command-line-arguments)))
+  (define-values (fmt args) (format-flag (vector->list (current-command-line-arguments))))
+  (current-format fmt)
   (cond
     [(null? args) (usage)]
     [(equal? (car args) "--tck") (dynamic-require '(submod fml/tests/run main) #f)]

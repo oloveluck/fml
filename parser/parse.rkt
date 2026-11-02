@@ -14,13 +14,17 @@
          "ast.rkt"
          (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
-         (only-in cql/error cql-error))
+         (only-in cql/error cql-error)
+         (only-in fhir/diagnostic exn->diagnostic diagnostic->string))
 
 (provide (contract-out
-          [parse-fml (-> string? (or/c ok? err?))]))   ; (ok fml-map) | (err cql-error)
+          ;; (ok fml-map) | (err cql-error) — a parse error carries its diagnostic (positions in `source`)
+          [parse-fml (->* (string?) (#:source (or/c string? path? #f)) (or/c ok? err?))]))
 
-(define (parse-fml src)
-  (with-handlers ([exn:fail? (lambda (e) (err (cql-error 'parse (exn-message e))))])
+(define (parse-fml src #:source [source #f])
+  (with-handlers ([exn:fail? (lambda (e)
+                               (define d (exn->diagnostic e 'fml #:source source))
+                               (err (cql-error 'parse (diagnostic->string d) d)))])
     (ok (lower-doc (g:parse-to-datum (tokenize (open-input-string src)))))))
 
 ;; ---- helpers over brag datum trees ------------------------------------------
