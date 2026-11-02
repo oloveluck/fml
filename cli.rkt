@@ -49,14 +49,24 @@
   (unless (ok? r) (eprintf "~a: ~a\n" src-file (validation-error-message (err-error r))) (exit 1))
   (displayln (jsexpr->string (run-map m (ok-value r)))))
 
-(define (usage)
-  (eprintf "usage: raco fml <file.map> [--transform <source.json>]\n       raco fml --tck\n")
-  (exit 2))
+(define (usage [code 2])                             ; --help: stdout, exit 0
+  ((if (zero? code) printf eprintf) "usage: raco fml <file.map> [--transform <source.json>]\n       raco fml --tck\n")
+  (exit code))
 
 (module+ main
   (define-values (fmt args) (format-flag (vector->list (current-command-line-arguments))))
   (current-format fmt)
+  ;; an unreadable input file is a one-line error (exit 2), not a stack trace
+  (let ([default (uncaught-exception-handler)])
+    (uncaught-exception-handler
+     (lambda (e)
+       (cond [(exn:fail:filesystem? e)
+              (define m (regexp-match #px"path: ([^\n]*)" (exn-message e)))
+              (eprintf "fml: cannot read ~a\n" (if m (cadr m) (exn-message e)))
+              (exit 2)]
+             [else (default e)]))))
   (cond
+    [(ormap (lambda (a) (member a '("-h" "--help"))) args) (usage 0)]
     [(null? args) (usage)]
     [(equal? (car args) "--tck") (dynamic-require '(submod fml/tests/run main) #f)]
     [(regexp-match? #rx"^-" (car args)) (usage)]
