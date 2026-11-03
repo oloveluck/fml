@@ -2,8 +2,8 @@
 
 ;;; operations.rkt — StructureMap/$transform as an operation value (fhir/operation).
 ;;;
-;;;   ($transform content "srcMap" fml-text)            run an FML map over `content` (piped)
-;;;   (pipeline qr (step $transform "srcMap" fml) (validated #:profile …))
+;;;   ($transform content #:srcMap fml-text)            run an FML map over `content` (the subject)
+;;;   (~> qr ($transform #:srcMap fml) (ensure-valid #:profile …))
 ;;; This implementation executes FML: the map is `srcMap` (FHIR Mapping Language text), and a
 ;;; `source`/`sourceMap` alone (a StructureMap in JSON) is refused with that explanation. The
 ;;; content is read leniently into the R5 tower (FML's transform engine works on typed nodes).
@@ -53,8 +53,8 @@
                      'item (list (hasheq 'linkId "patient"
                                          'item (list (hasheq 'linkId "patient.sex"
                                                              'answer (list (hasheq 'valueString "female"))))))))
-  (define p (call-operation "http://hl7.org/fhir/OperationDefinition/StructureMap-transform" qr "srcMap" fml))
+  (define p (apply-operation "http://hl7.org/fhir/OperationDefinition/StructureMap-transform" qr #:srcMap fml))
   (check-equal? (hash-ref p 'resourceType) "Patient")
   (check-equal? (hash-ref p 'gender) "female")
-  (check-exn #rx"give the map as srcMap" (lambda () ($transform qr "source" "http://example.org/map")))
-  (check-exn #rx"does not parse" (lambda () ($transform qr "srcMap" "map oops"))))
+  (check-exn #rx"give the map as srcMap" (lambda () ($transform qr #:source "http://example.org/map")))
+  (check-exn #rx"does not parse" (lambda () ($transform qr #:srcMap "map oops"))))
