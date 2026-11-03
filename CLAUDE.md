@@ -33,3 +33,11 @@ repo-wide, documented in the vendor SOURCE.txt).
 `operations.rkt`: StructureMap/$transform as an operation (fhir/operation) — `(apply-operation
 "StructureMap/$transform" content #:srcMap fml-text)`. It executes FML (the R5 definition's `srcMap`);
 a StructureMap given only as `source`/`sourceMap` JSON is refused with that explanation.
+
+Transforms beyond the TCK, added for real maps (fhir-examples' screening/intake.fml): the spec's datatype
+constructors `c`, `cc`, `qty`, `id`, `cp`, `append` (a `constructors` table in transform.rkt); a choice
+SOURCE reads whichever variant is present (`ans.value` -> `valueDecimal`); a choice TARGET takes its key
+from the assigned value's type — a primitive variable's own type, a constructor's (`qty` -> Quantity) or
+`create('T')` (`tgt.effective = a` -> `effectiveDateTime`); primitives render as their JSON form.
+`#lang fml`'s `transform` takes FHIR JSON (or a typed node) and answers FHIR JSON. TCK unchanged: 6/6 +
+15/15.

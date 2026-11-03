@@ -13,14 +13,16 @@
 ;;;     vars bound by earlier ops); `share v` reuses ONE target element across rules that share v;
 ;;;     run `then` dependent group calls / nested rules in the extended scope.
 ;;;   target ops: `t.elem` (create/ensure), `= 'lit'`, `= (fhirpath)` (over the rule's variables),
-;;;   `= var`, `= create('T')`, `= reference(v)`, `= cast(v,'T')`, `= copy(v)`, `= evaluate(v, fp)`.
+;;;   `= var`, `= create('T')`, `= reference(v)`, `= cast(v,'T')`, `= copy(v)`, `= evaluate(v, fp)`,
+;;;   and the datatype constructors `c`, `cc`, `qty`, `id`, `cp`, `append` (the `constructors` table).
 ;;;
 ;;; FML's FHIRPath dialect reads primitives via `.value` (element model); the repo's engine unwraps
 ;;; primitives implicitly, so a trailing `.value` step that fails/empties is retried stripped.
 
 (require racket/contract racket/match racket/list racket/string
          "parser/ast.rkt"
-         (only-in fhir/model/node fhir? fhir-ref fhir-type)
+         (only-in fhir/model/node fhir? fhir-ref fhir-type fhir-field-names)
+         (only-in fhir/primitives/primitives primitive->jsexpr)
          (only-in fhir/model/base primitive-type? primitive-type-value)
          (only-in fhir/model/introspect full-field-specs)
          (only-in fhir/model/schema field-spec? fs-name fs-kind fs-ftype ftype-type? ftype-type-name)
@@ -58,6 +60,33 @@
      => (lambda (m) (values (fs-name m) (eq? (fs-kind m) 'list) (string->symbol forced-type)))]
     [else (values sym #f (and forced-type (string->symbol forced-type)))]))  ; unknown type: scalar
 (define (choice-key base ty) (string->symbol (string-append (symbol->string base) ty)))
+;; choice-field : node elem -> the field holding `elem`: itself, or a choice variant (`value` ->
+;; `valueDecimal`, whichever the node has)
+(define (choice-field node elem)
+  (define sym (string->symbol elem))
+  (if (fhir-ref node sym #f)
+      sym
+      (or (for/first ([k (in-list (fhir-field-names node))]
+                      #:when (let ([n (symbol->string k)])
+                               (and (> (string-length n) (string-length elem))
+                                    (string-prefix? n elem)
+                                    (char-upper-case? (string-ref n (string-length elem))))))
+            k)
+          sym)))
+;; value-type : a transform's result type name for a choice target ("DateTime", "Quantity") or #f:
+;; create('T'); a constructor (qty -> Quantity …); a variable holding a primitive or a node
+(define constructor-types (hash "c" "Coding" "cc" "CodeableConcept" "qty" "Quantity" "id" "Identifier" "cp" "ContactPoint"))
+(define (capitalize s) (if (zero? (string-length s)) s (string-append (string-upcase (substring s 0 1)) (substring s 1))))
+(define (value-type tr sc)
+  (match tr
+    [(fml-invoke "create" (list (fml-literal ty))) ty]
+    [(fml-invoke name _) #:when (hash-ref constructor-types name #f) (hash-ref constructor-types name)]
+    [(fml-var name)
+     (define v (lookup sc name))
+     (cond [(primitive-type? v) (capitalize (regexp-replace #rx"^struct:fhir-" (symbol->string (vector-ref (struct->vector v) 0)) ""))]
+           [(fhir? v) (symbol->string (fhir-type v))]
+           [else #f])]
+    [_ #f]))
 (define (ftype->sym ft)
   (cond [(ftype-type? ft) (ftype-type-name ft)]
         [else #f]))                                ; primitives/resources carry no child schema
@@ -150,7 +179,7 @@
 (define (source-matches s ctx)
   (define base
     (cond [(not (fml-source-element s)) (list ctx)]
-          [(fhir? ctx) (let ([v (fhir-ref ctx (string->symbol (fml-source-element s)) '())])
+          [(fhir? ctx) (let ([v (fhir-ref ctx (choice-field ctx (fml-source-element s)) '())])
                          (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
           [else '()]))
   (define filtered
@@ -173,7 +202,7 @@
   (unless (tslot? ctx) (error 'run-map "target context ~a is not a target" (fml-target-context t)))
   (define tr (fml-target-transform t))
   ;; create('T') on a choice element decides the concrete key (value + T), so thread the type in
-  (define forced-type (match tr [(fml-invoke "create" (list (fml-literal ty))) ty] [_ #f]))
+  (define forced-type (and tr (value-type tr sc)))
   (define slot
     (cond
       [(not (fml-target-element t)) ctx]
@@ -206,7 +235,54 @@
      (fp-scalar-over ast (lookup sc v) sc)]
     [(fml-invoke "truncate" (list v (fml-literal n)))
      (let ([s (value->jsexpr (lookup sc v))]) (if (string? s) (substring s 0 (min (string-length s) (string->number n))) s))]
+    [(fml-invoke name args)
+     #:when (hash-ref constructors name #f)
+     ((hash-ref constructors name) (for/list ([a (in-list args)]) (arg-value a sc)))]
     [_ (error 'run-map "unsupported transform ~a" tr)]))
+
+;; arg-value : a transform argument -> its jsexpr value (literal, variable, or FHIRPath)
+(define (arg-value a sc)
+  (match a
+    [(fml-literal v) v]
+    [(? string? name) (value->jsexpr (lookup sc name))]          ; a variable, by name
+    [(fml-fhirpath ast) (fp-scalar ast sc)]
+    [_ (error 'run-map "unsupported transform argument ~a" a)]))
+
+;; the spec's datatype constructors (FHIR Mapping Language, "Transforms"), as a table:
+;;   c(system, code [, display])            -> Coding
+;;   cc(text) | cc(system, code [, display]) -> CodeableConcept
+;;   qty(text) | qty(value, unit [, system, code]) -> Quantity  (text: "[comparator]value unit")
+;;   id(system, value [, type])             -> Identifier
+;;   cp([system,] value)                    -> ContactPoint
+;;   append(v …)                            -> the strings joined
+(define (drop-nulls h) (for/hasheq ([(k v) (in-hash h)] #:unless (or (not v) (eq? v 'null))) (values k v)))
+(define (coding system code [display #f]) (drop-nulls (hasheq 'system system 'code code 'display display)))
+(define (number-of v) (if (string? v) (or (string->number v) v) v))
+(define constructors
+  (hash "c" (lambda (args) (apply coding args))
+        "cc" (lambda (args)
+               (match args
+                 [(list text) (hasheq 'text text)]
+                 [(list system code more ...) (hasheq 'coding (list (apply coding system code more)))]))
+        "qty" (lambda (args)
+                (match args
+                  [(list text)
+                   (match (regexp-match #px"^\\s*(<=|>=|<|>)?\\s*([-+]?[0-9.]+)\\s*(.*)$" (format "~a" text))
+                     [(list _ cmp v unit)
+                      (drop-nulls (hasheq 'comparator cmp 'value (string->number v)
+                                          'unit (and (positive? (string-length unit)) unit)))]
+                     [_ (error 'run-map "qty: cannot read ~s" text)])]
+                  [(list v unit) (hasheq 'value (number-of v) 'unit unit)]
+                  [(list v unit system code) (hasheq 'value (number-of v) 'unit unit 'system system 'code code)]))
+        "id" (lambda (args)
+               (match args
+                 [(list system value) (hasheq 'system system 'value value)]
+                 [(list system value type) (hasheq 'system system 'value value 'type (hasheq 'text type))]))
+        "cp" (lambda (args)
+               (match args
+                 [(list value) (hasheq 'value value)]
+                 [(list system value) (hasheq 'system system 'value value)]))
+        "append" (lambda (args) (apply string-append (for/list ([a (in-list args)]) (if (string? a) a (format "~a" a)))))))
 
 ;; ---- FHIRPath bridging -------------------------------------------------------
 ;; evaluate an FML FHIRPath AST (parsed once, at parse time) over a focus element, with the scope's
@@ -268,8 +344,9 @@
         [(fhir? v) (node->jsexpr v)]
         [else (item->jsexpr v)]))
 (define (item->jsexpr item)
-  (define v (item->system item))
-  (cond [(boolean? v) v]
+  (define v (if (primitive-type? item) (primitive->jsexpr item) (item->system item)))
+  (cond [(eq? v 'null) 'null]
+        [(boolean? v) v]
         [(exact-integer? v) v]
         [(fp-long? v) (fp-long-v v)]
         [(fp-decimal? v) (string->number (decimal->string v))]
