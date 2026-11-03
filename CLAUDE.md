@@ -29,3 +29,7 @@ Conformance (`raco fhir fml-tck` → `fml/tests/run.rkt`): the vendored
 `fhir-test-cases/r5/structure-mapping` suite — **6/6 executable JSON tests, 15/15 `.map` parses**;
 the 4 CDA/XML-output tests + the one StructureMap-as-JSON input are skipped (XML is out of scope
 repo-wide, documented in the vendor SOURCE.txt).
+
+`operations.rkt`: StructureMap/$transform as an operation value (fhir/operation) — `(call-operation
+"StructureMap/$transform" content "srcMap" fml-text)`. It executes FML (the R5 definition's `srcMap`);
+a StructureMap given only as `source`/`sourceMap` JSON is refused with that explanation.
