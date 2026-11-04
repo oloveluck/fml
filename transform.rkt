@@ -582,5 +582,6 @@ group inner(source src : TLeftAa, target tgt : TRightAa) <<types>> {
 EOF
 )))
   (parameterize ([current-data-source (resources->data-source sds)])
+    (uses-types m2)                                      ; TLeft/TRight exist before the source is read
     (define left (ok-value (from-json (hasheq 'resourceType "TLeft" 'a "12345" 'd "vonhier" 'aa (list (hasheq 'ab "x"))))))
     (check-equal? (run-map m2 left) (hash 'resourceType "TRight" 'a 12345 'd "nach-da" 'aa (list (hash 'ab "x!"))))))
