@@ -3,6 +3,7 @@
 ;;; cli.rkt — `raco fml`: the command line for the FHIR Mapping Language package.
 ;;;
 ;;;   raco fml <file.map>                         parse an FML map and print its StructureMap JSON
+;;;                                               (a StructureMap .json is accepted wherever a .map is)
 ;;;   raco fml <file.map> --transform <src.json>  run the map over a source resource (R5), print the target
 ;;;       [--structures <file|dir>]               StructureDefinitions the map's `uses` resolve in
 ;;;                                               (logical models: a JSON file, a Bundle, or a directory)
@@ -13,7 +14,7 @@
 (require json
          (only-in racket/file file->string)
          (only-in fml/parser/parse parse-fml)
-         (only-in fml/structuremap fml->structuremap)
+         (only-in fml/structuremap fml->structuremap structuremap->fml)
          (only-in fml/transform run-map uses-types)
          (only-in cql/error cql-error-string cql-error-diagnostic cql-error-message)
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc emit-diagnostics format-flag)
@@ -34,6 +35,13 @@
   (struct-copy diagnostic d [loc (if l (struct-copy loc l [source source]) (loc source #f #f #f #f))]))
 
 (define (parse-file file)
+  (if (regexp-match? #px"\\.json$" (if (path? file) (path->string file) file))
+      (let ([sm (call-with-input-file file read-json)])
+        (unless (and (hash? sm) (equal? (hash-ref sm 'resourceType #f) "StructureMap"))
+          (eprintf "~a: not a StructureMap\n" file) (exit 1))
+        (structuremap->fml sm))
+      (parse-map-text file)))
+(define (parse-map-text file)
   (define src (regexp-replace #px"^#lang[^\n]*" (file->string file) ""))   ; keep line numbers
   (define r (parse-fml src #:source file))
   (unless (ok? r)

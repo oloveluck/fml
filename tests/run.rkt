@@ -5,7 +5,8 @@
 
 (require racket/runtime-path
          (only-in "harness.rkt" run-fml-suite)
-         (only-in "matchbox-harness.rkt" parse-corpus run-tutorial run-smoke tally-passed tally-total tally-failures))
+         (only-in "matchbox-harness.rkt" parse-corpus run-tutorial run-smoke roundtrip-corpus
+                  run-tutorial/structuremap compare-reference-structuremaps tally-passed tally-total tally-failures))
 (define-runtime-path vendor "vendor/structure-mapping")
 (define-runtime-path matchbox "vendor/matchbox")
 
@@ -23,11 +24,22 @@
   (report "FML tutorial (matchbox)" mt)
   (define ms (run-smoke matchbox))
   (report "matchbox maps run" ms)
+  (define rt1 (roundtrip-corpus vendor))
+  (define rt2 (roundtrip-corpus matchbox))
+  (report "StructureMap round trip (fhir-test-cases)" rt1)
+  (report "StructureMap round trip (matchbox)" rt2)
+  (define ts (run-tutorial/structuremap matchbox))
+  (report "FML tutorial from the reference's StructureMaps" ts)
+  (define cs (compare-reference-structuremaps matchbox))
+  (report "our StructureMap vs the reference's, by rule" cs)
   ;; floors: every runnable JSON test and every .map stay green; the corpus floors ratchet up
   (define floors (list (list "structure-mapping exec" ep 6) (list "structure-mapping parse" pp pt)
                        (list "matchbox parse" (tally-passed mp) 43)
                        (list "tutorial" (tally-passed mt) 37)
-                       (list "matchbox runs" (tally-passed ms) 17)))
+                       (list "matchbox runs" (tally-passed ms) 17)
+                       (list "round trip" (+ (tally-passed rt1) (tally-passed rt2)) 0)
+                       (list "tutorial from StructureMaps" (tally-passed ts) 0)
+                       (list "StructureMap vs reference" (tally-passed cs) 0)))
   (define regressed (filter (lambda (f) (< (cadr f) (caddr f))) floors))
   (unless (null? regressed)
     (for ([f regressed]) (eprintf "FML conformance regressed: ~a ~a < floor ~a\n" (car f) (cadr f) (caddr f)))

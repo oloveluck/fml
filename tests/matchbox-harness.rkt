@@ -15,7 +15,11 @@
          (only-in fhir/r5/schemas)                       ; the tower the sources parse into
          (only-in fhir/data-source current-data-source resources->data-source)
          (only-in "../parser/parse.rkt" parse-fml)
-         (only-in "../transform.rkt" run-map uses-types)
+         (only-in "../parser/ast.rkt" fml-map fml-map? fml-map-url fml-map-conceptmaps fml-conceptmap fml-conceptmap-prefixes)
+         (only-in "../structuremap.rkt" fml->structuremap structuremap->fml)
+         (only-in "../transform.rkt" run-map uses-types resolve-structure-map)
+         (only-in fhirpath/parser/parse parse-fhirpath)
+         (only-in fhirpath/print fhirpath->string)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value err-error))
 
@@ -32,7 +36,17 @@
           ;; run-tutorial : matchbox-dir -> tally   the tutorial steps' expected results
           [run-tutorial (-> path-string? tally?)]
           ;; run-smoke : matchbox-dir -> tally   the top-level maps run over their sources
-          [run-smoke (-> path-string? tally?)]))
+          [run-smoke (-> path-string? tally?)]
+          ;; roundtrip-corpus : dir -> tally   every .map: parse, emit the StructureMap, read it back,
+          ;; same AST (up to the FML-only surface)
+          [roundtrip-corpus (-> path-string? tally?)]
+          ;; run-tutorial/structuremap : matchbox-dir -> tally   the tutorial again, each map taken
+          ;; from the reference's StructureMap resource (map/<step>.json) by canonical — no FML read
+          [run-tutorial/structuremap (-> path-string? tally?)]
+          ;; compare-reference-structuremaps : matchbox-dir -> tally   our StructureMap for each
+          ;; tutorial map against the reference's, rule by rule (metadata and R4-only fields dropped,
+          ;; FHIRPath text normalised through parse and print)
+          [compare-reference-structuremaps (-> path-string? tally?)]))
 
 ;; ---- parse ------------------------------------------------------------------
 (define (map-files dir)
@@ -54,13 +68,74 @@
 ;; run-one : map-file source-file -> jsexpr | (list 'error message)   inside the step's data source
 (define (run-one map-file source-file)
   (with-handlers ([exn:fail? (lambda (e) (list 'error (exn-message e)))])
-    (define mr (parse-fml (file->string map-file)))
-    (unless (ok? mr) (error 'parse "~a" (err-error mr)))
-    (define m (ok-value mr))
-    (uses-types m)                                   ; registers the step's logical models
-    (define sr (from-json (read-json-file source-file) #:lenient? #t))
-    (unless (ok? sr) (error 'source "~a does not parse as its type" source-file))
-    (run-map m (ok-value sr))))
+    (define-values (m _) (map-from-file map-file '()))
+    (run-loaded m source-file)))
+(define (run-loaded m source-file)
+  (uses-types m)                                   ; registers the step's logical models
+  (define sr (from-json (read-json-file source-file) #:lenient? #t))
+  (unless (ok? sr) (error 'source "~a does not parse as its type" source-file))
+  (run-map m (ok-value sr)))
+
+;; ---- the StructureMap as the interchange form --------------------------------------
+(define (ast-key m)
+  (struct-copy fml-map m [metadata '()]
+               [conceptmaps (for/list ([c (fml-map-conceptmaps m)]) (struct-copy fml-conceptmap c [prefixes (hash)]))]))
+
+(define (roundtrip-corpus dir)
+  (for/fold ([t (tally 0 0 '())]) ([f (in-list (map-files dir))])
+    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
+    (define outcome
+      (with-handlers ([exn:fail? (lambda (e) (format "error: ~a" (exn-message e)))])
+        (define r (parse-fml (file->string f)))
+        (cond [(not (ok? r)) 'skip]                                   ; parse failures are counted elsewhere
+              [else (define m (ok-value r))
+                    (define back (structuremap->fml (fml->structuremap m)))
+                    (if (equal? back (ast-key m)) 'pass (format "read back differs from the parsed map"))])))
+    (case outcome
+      [(skip) t]
+      [(pass) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
+      [else (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome))))])))
+
+;; the reference's StructureMap (matchbox, R4-flavoured) and ours, comparable: ids/metadata and
+;; R4-only fields dropped, unnamed rules unnamed on both sides, FHIRPath text re-printed
+(define (normalise-sm sm)
+  (define (fp s) (if (string? s) (with-handlers ([exn:fail? (lambda (_) s)]) (fhirpath->string (parse-fhirpath s))) s))
+  (define (param p)
+    (for/hasheq ([(k v) (in-hash p)]) (values k (if (eq? k 'valueString) (fp v) v))))
+  (define (target t)
+    (for/hasheq ([(k v) (in-hash t)] #:unless (memq k '(contextType)))
+      (values k (cond [(eq? k 'parameter) (map param v)] [else v]))))
+  (define (source s)
+    (for/hasheq ([(k v) (in-hash s)]) (values k (if (memq k '(condition check logMessage)) (fp v) v))))
+  (define (rule r)
+    (for/hasheq ([(k v) (in-hash r)] #:unless (and (eq? k 'name) (regexp-match? #px"^rule-?[0-9]*$" v)))
+      (values k (case k [(source) (map source v)] [(target) (map target v)] [(rule) (map rule v)] [else v]))))
+  (define (group g)
+    (for/hasheq ([(k v) (in-hash g)] #:unless (or (memq k '(documentation)) (and (eq? k 'typeMode) (equal? v "none"))))
+      (values k (if (eq? k 'rule) (map rule v) v))))
+  (for/hasheq ([(k v) (in-hash sm)] #:when (memq k '(structure import group)))
+    (values k (if (eq? k 'group) (map group v) v))))
+
+(define (compare-reference-structuremaps dir)
+  (define pairs (for/list ([f (in-list (map-files (build-path dir "tutorial")))]
+                           #:when (file-exists? (path-replace-extension f #".json")))
+                  f))
+  (for/fold ([t (tally 0 0 '())]) ([f (in-list pairs)])
+    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
+    (define r (parse-fml (file->string f)))
+    (cond
+      [(not (ok? r)) t]
+      [else
+       (define ours (normalise-sm (fml->structuremap (ok-value r))))
+       (define theirs (normalise-sm (read-json-file (path-replace-extension f #".json"))))
+       (define (rules sm) (append-map (lambda (g) (hash-ref g 'rule '())) (hash-ref sm 'group '())))
+       (define ok (for/sum ([a (in-list (rules ours))] [b (in-list (rules theirs))]) (if (jsexpr=? a b) 1 0)))
+       (define total (max (length (rules ours)) (length (rules theirs))))
+       (tally (+ (tally-passed t) ok) (+ (tally-total t) total)
+              (if (= ok total) (tally-failures t)
+                  (append (tally-failures t)
+                          (for/list ([a (in-list (rules ours))] [b (in-list (rules theirs))] #:unless (jsexpr=? a b))
+                            (list name (format "rule ~a differs\n    ours   ~v\n    theirs ~v" (hash-ref a 'name "?") a b))))))])))
 
 (define (expected-error? j) (and (hash? j) (equal? (hash-ref j 'resourceType #f) "OperationOutcome")))
 
@@ -79,7 +154,23 @@
      "the reference test expects an exception: only_one over two elements")))
 (define (override-of name) (let ([o (assoc name reference-overrides)]) (and o (cadr o))))
 
-(define (run-tutorial dir)
+(define (run-tutorial dir) (run-tutorial-with dir map-from-file))
+(define (run-tutorial/structuremap dir) (run-tutorial-with dir map-from-structuremap))
+
+;; a map loader : map-file sds -> (values fml-map extra-resources)   the FML file, or the reference's
+;; StructureMap next to it resolved by its canonical from the data source
+(define (map-from-file map-file sds)
+  (define mr (parse-fml (file->string map-file)))
+  (unless (ok? mr) (error 'parse "~a" (err-error mr)))
+  (values (ok-value mr) '()))
+(define (map-from-structuremap map-file sds)
+  (define sm (read-json-file (path-replace-extension map-file #".json")))
+  (define m (parameterize ([current-data-source (resources->data-source (cons sm sds))])
+              (resolve-structure-map (hash-ref sm 'url))))
+  (unless m (error 'structuremap "~a: not resolved by canonical" map-file))
+  (values m (list sm)))
+
+(define (run-tutorial-with dir load-map)
   (define steps (sort (for/list ([d (directory-list (build-path dir "tutorial") #:build? #t)]
                                  #:when (directory-exists? (build-path d "result")))
                         d)
@@ -101,8 +192,10 @@
                            j)))
     (define actual (if (eq? (override-of name) 'skip)
                        'skipped
-                       (parameterize ([current-data-source (resources->data-source sds)])
-                         (run-one map-file source-file))))
+                       (with-handlers ([exn:fail? (lambda (e) (list 'error (exn-message e)))])
+                         (define-values (m extra) (load-map map-file sds))
+                         (parameterize ([current-data-source (resources->data-source (append extra sds))])
+                           (run-loaded m source-file)))))
     (define outcome
       (cond [(eq? actual 'skipped) 'skipped]
             [(expected-error? expected)
@@ -166,4 +259,9 @@
   ;; every case the reference asserts agrees (the overrides above are the reference's own)
   (check-equal? (tally-failures t) '())
   (check-equal? (tally-total t) 37)
-  (check-true (>= (tally-passed (run-smoke vendor)) 17)))
+  (check-true (>= (tally-passed (run-smoke vendor)) 17))
+  ;; the StructureMap as the interchange form: every map reads back, step 1 runs from the resource
+  (define rt (roundtrip-corpus vendor))
+  (check-equal? (tally-failures rt) '())
+  (define ts (run-tutorial/structuremap vendor))
+  (check-false (assoc "step1/step1.source1.json" (tally-failures ts)) "tutorial step 1 from its StructureMap"))

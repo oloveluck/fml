@@ -35,6 +35,9 @@
                   ftype-prim? ftype-prim-code type-schema-parent resource-parent?)
          (only-in fhir/model/registry type-registered? type-schema-of primitive-name?)
          (only-in fhir/sd/logical register-structure-definition! resolve-structure-definition/data)
+         (only-in fhir/sd/sd-index resolve-canonical-raw)
+         (only-in fhir/data-source current-data-source data-source-all)
+         (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
          (only-in fhir/terminology/service translate/json)
          (only-in fhirpath/parser/ast fp-invoke fp-invoke? fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
@@ -52,7 +55,42 @@
           [current-fml-log (parameter/c (-> string? any))]
           ;; uses-types : map -> (hash alias-or-type-name -> type symbol)   the `uses` resolved,
           ;; logical models registered along the way
-          [uses-types (-> fml-map? hash?)]))
+          [uses-types (-> fml-map? hash?)]
+          ;; register-structure-map! : map -> void   resolvable by its url in this process
+          [register-structure-map! (-> fml-map? void?)]
+          ;; resolve-structure-map : canonical -> map | #f   registered maps, then StructureMaps in
+          ;; the current data source, then the packages (|version ignored)
+          [resolve-structure-map (-> string? (or/c fml-map? #f))]
+          ;; registered-structure-maps : -> (listof url)
+          [registered-structure-maps (-> (listof string?))]
+          ;; map-imports : map -> (listof map)   the map and its imports, transitively (missing ones
+          ;; skipped), the map itself first
+          [map-imports (-> fml-map? (listof fml-map?))]))
+
+;; ---- maps by canonical ---------------------------------------------------------
+(define registered (make-hash))
+(define (register-structure-map! m)
+  (when (string? (fml-map-url m)) (hash-set! registered (fml-map-url m) m)))
+(define (registered-structure-maps) (sort (hash-keys registered) string<?))
+(define converted (make-weak-hasheq))           ; a StructureMap jsexpr -> its AST, once
+(define (resolve-structure-map url)
+  (define key (car (regexp-split #rx"[|]" url)))
+  (define (as-ast sm) (hash-ref! converted sm (lambda () (structuremap->fml sm))))
+  (or (hash-ref registered key #f)
+      (let ([sm (findf (lambda (r) (equal? (hash-ref r 'url #f) key))
+                       ((data-source-all (current-data-source)) "StructureMap"))])
+        (and sm (as-ast sm)))
+      (let ([sm (resolve-canonical-raw "StructureMap" key)]) (and sm (as-ast sm)))))
+
+(define (map-imports m)
+  (let loop ([todo (list m)] [seen '()] [acc '()])
+    (cond
+      [(null? todo) (reverse acc)]
+      [(member (fml-map-url (car todo)) seen) (loop (cdr todo) seen acc)]
+      [else
+       (define im (car todo))
+       (define more (filter values (map resolve-structure-map (fml-map-imports im))))
+       (loop (append (cdr todo) more) (cons (fml-map-url im) seen) (cons im acc))])))
 
 (define current-fml-log (make-parameter void))
 
@@ -169,8 +207,9 @@
 (define source-key " source")           ; the rule's current source element, for implicit copies
 
 ;; ---- the map's types ----------------------------------------------------------
-;; A Ctx is (ctx map types): the map and its `uses` resolved to type symbols (alias and type name)
-(struct ctx (map types))
+;; A Ctx is (ctx map types maps): the map, its `uses` resolved to type symbols (alias and type name,
+;; the imports' too), and the maps whose groups are callable (the map first, then its imports)
+(struct ctx (map types maps))
 
 (define (uses-types m)
   (for/fold ([h (hash)]) ([u (in-list (fml-map-uses m))])
@@ -190,7 +229,10 @@
 
 ;; ---- entry ------------------------------------------------------------------
 (define (run-map m src)
-  (define c (ctx m (uses-types m)))
+  (define maps (map-imports m))
+  (define c (ctx m (for/fold ([h (hash)]) ([im (in-list (reverse maps))]) ; the map's own names win
+                     (for/fold ([h h]) ([(k v) (in-hash (uses-types im))]) (hash-set h k v)))
+                 maps))
   (define entry (car (fml-map-groups m)))
   (define target-sym (target-type-of c entry))
   (define root (make-root-slot (hash 'resourceType (symbol->string target-sym)) target-sym))
@@ -217,8 +259,11 @@
   (when parent (run-group c parent sc))         ; a parent outside the map (an import) is not run
   (for ([r (in-list (fml-group-rules g))]) (run-rule c r sc)))
 
+;; a group by name: this map's, then the imported maps'
 (define (find-group c name)
-  (findf (lambda (g) (equal? (fml-group-name g) name)) (fml-map-groups (ctx-map c))))
+  (for/or ([m (in-list (ctx-maps c))])
+    (findf (lambda (g) (equal? (fml-group-name g) name)) (fml-map-groups m))))
+(define (all-groups c) (append-map fml-map-groups (ctx-maps c)))
 
 ;; ---- rules ------------------------------------------------------------------
 ;; every combination of the sources' matches, then the targets, dependents and nested rules
@@ -333,7 +378,7 @@
                 (let ([ps (fml-group-params g)])
                   (and (eq? (type-sym c (fml-param-type (car ps))) st)
                        (eq? (type-sym c (fml-param-type (cadr ps))) tt)))))
-         (fml-map-groups (ctx-map c))))
+         (all-groups c)))
 
 ;; transform-value : the jsexpr value a transform produces
 (define (transform-value c r tr sc slot)
@@ -541,8 +586,9 @@
 ;; run-call : `then group(a, b)` — the callee's params bound to the argument values positionally
 (define (run-call c call sc)
   (define g (or (find-group c (fml-call-name call))
-                (error 'fml "unknown group ~a (the groups of this map: ~a)" (fml-call-name call)
-                       (string-join (map fml-group-name (fml-map-groups (ctx-map c))) ", "))))
+                (error 'fml "unknown group ~a (the groups of this map~a: ~a)" (fml-call-name call)
+                       (if (pair? (cdr (ctx-maps c))) " and its imports" "")
+                       (string-join (map fml-group-name (all-groups c)) ", "))))
   (define args (for/list ([a (in-list (fml-call-args call))])
                  (cond [(string? a) (or (lookup sc a) (error 'fml "group ~a: unbound argument ~a" (fml-call-name call) a))]
                        [else (fp-scalar (fml-fhirpath-ast a) sc)])))
@@ -607,4 +653,22 @@ EOF
   (parameterize ([current-data-source (resources->data-source sds)])
     (uses-types m2)                                      ; TLeft/TRight exist before the source is read
     (define left (ok-value (from-json (hasheq 'resourceType "TLeft" 'a "12345" 'd "vonhier" 'aa (list (hasheq 'ab "x"))))))
-    (check-equal? (run-map m2 left) (hash 'resourceType "TRight" 'a 12345 'd "nach-da" 'aa (list (hash 'ab "x!"))))))
+    (check-equal? (run-map m2 left) (hash 'resourceType "TRight" 'a 12345 'd "nach-da" 'aa (list (hash 'ab "x!")))))
+  ;; a dependent group from an IMPORTED map: the import is a StructureMap resource in the data source
+  (require (only-in "structuremap.rkt" fml->structuremap))
+  (define lib (ok-value (parse-fml (string-append
+    "map \"http://x/lib\" = \"lib\"\n"
+    "group shout(source s, target t) { s.ab as b -> t.ab = append(b, '!!'); }\n"))))
+  (define m3 (ok-value (parse-fml (string-append
+    "map \"http://x/m3\" = \"m3\"\n"
+    "imports \"http://x/lib\"\n"
+    "uses \"http://x/TLeft\" alias TLeft as source\n"
+    "uses \"http://x/TRight\" alias TRight as target\n"
+    "group tutorial(source src : TLeft, target tgt : TRight) {\n"
+    "  src.aa as a -> tgt.aa as t then shout(a, t);\n"
+    "}\n"))))
+  (parameterize ([current-data-source (resources->data-source (cons (fml->structuremap lib) sds))])
+    (uses-types m3)
+    (define left (ok-value (from-json (hasheq 'resourceType "TLeft" 'aa (list (hasheq 'ab "y"))))))
+    (check-equal? (run-map m3 left) (hash 'resourceType "TRight" 'aa (list (hash 'ab "y!!"))))
+    (check-equal? (fml-map-url (resolve-structure-map "http://x/lib|1.0")) "http://x/lib")))
