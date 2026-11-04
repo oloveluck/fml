@@ -46,12 +46,15 @@ from the assigned value's type — a primitive variable's own type, a constructo
 mapping-language test resources, Apache-2.0; `tests/matchbox-harness.rkt`; `raco fml --tck` runs both
 corpora with floors in `tests/run.rkt`): every map parses (43/43); the tutorial's 13 steps run over their
 logical models — each step's StructureDefinitions are the data source the map's `uses` resolve in — and
-compare to the expected results (**36/38**; an expected OperationOutcome means the run must fail); the
+compare to the expected results (**37/37**; an expected OperationOutcome means the run must fail); the
 top-level maps run over their sources (17/17; the Java tests assert single values, so no expected
-outputs). The two tutorial disagreements are NAMED in the harness (`tutorial-disagreements`): `only_one`
-over two elements is an error per spec (the reference keeps the last), and `where a.isInteger()` is false
-here (not a FHIRPath function; the reference copies anyway). CI also parses the FHIR R3/R4 inter-version
-maps (FHIR/interversion, 332 maps, no license so not vendored): 332/332.
+outputs). Two result files are NOT expectations of the reference, and the harness says so with the
+evidence from matchbox's test class (`reference-overrides`): step4b.map is never run there (its own
+comment: `isInteger()` is not a FHIRPath function — the where is false here), and step6b over source6b
+is expected to THROW (`only_one` over two elements — an error here too; the result file is stale).
+Lesson: a corpus's result files are not all assertions — read the reference's test before calling a
+difference a disagreement. CI also parses the FHIR R3/R4 inter-version maps (FHIR/interversion, 332
+maps, no license so not vendored): 332/332.
 What the corpus drove in the engine (transform.rkt): types from `uses` — a url the towers lack is resolved
 as a StructureDefinition (data source, then packages) and registered through `fhir/sd/logical`
 (`uses-types`; a later definition of the same type name replaces the earlier — the tutorial's TLeft per

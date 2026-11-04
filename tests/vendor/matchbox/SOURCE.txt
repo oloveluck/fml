@@ -16,5 +16,8 @@ Contents:
                       map/       the step's maps (.map; the .json is matchbox's StructureMap form)
                       source/    TLeft instances
                       result/    <map>.<source>.json — the expected TRight, or an OperationOutcome
-                                 when the run is expected to fail
+                                 when the run is expected to fail. Two files are not expectations of
+                                 the reference (its test class never runs step4b.map, and expects
+                                 step6b over source6b to throw); tests/matchbox-harness.rkt lists them
+                                 as `reference-overrides` with the evidence
 XML files are not vendored (JSON only, repo-wide).

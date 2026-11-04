@@ -25,8 +25,8 @@
 (provide (contract-out
           [struct tally ([passed exact-nonnegative-integer?] [total exact-nonnegative-integer?]
                          [failures list?])]
-          ;; the tutorial cases this engine answers differently from the reference, each with why
-          [tutorial-disagreements (listof (list/c string? string?))]
+          ;; result files the reference's own tests do not use as expectations (with the evidence)
+          [reference-overrides (listof (list/c string? (or/c 'skip 'error) string?))]
           ;; parse-corpus : dir -> tally   every .map under dir (recursively) parses
           [parse-corpus (-> path-string? tally?)]
           ;; run-tutorial : matchbox-dir -> tally   the tutorial steps' expected results
@@ -64,12 +64,20 @@
 
 (define (expected-error? j) (and (hash? j) (equal? (hash-ref j 'resourceType #f) "OperationOutcome")))
 
-;; Two expected results encode the reference engine's leniency rather than the specification:
-(define tutorial-disagreements
-  '(("step4/step4b.source4.json"
-     "`where a.isInteger()`: isInteger is not a FHIRPath function (the map says so itself); the reference copies the value anyway, this engine's where is false")
-    ("step6/step6b.source6b.json"
-     "`src.a23 only_one` over two elements: the specification makes it an error; the reference keeps the last value")))
+;; Two result files are not expectations of the reference engine. The evidence is matchbox's own
+;; test class (matchbox-engine/src/test/java/ch/ahdis/matchbox/engine/tests/FhirMappingLanguageTests.java
+;; at the vendored commit):
+;;   step4b.map is never run there — the map's own comment says `a.isInteger()` "will not work, isInteger
+;;   is not a FHIRPath function"; the result file is a leftover, so the case is skipped;
+;;   step6b over source6b: the test expects the transform to THROW (`only_one` over two elements —
+;;   "Rule rule_a23b: Check condition failed: the collection has more than one item"), so the run must
+;;   fail here too, whatever the stale result file says.
+(define reference-overrides
+  '(("step4/step4b.source4.json" skip
+     "the reference never runs step4b.map; its comment says isInteger() is not a FHIRPath function")
+    ("step6/step6b.source6b.json" error
+     "the reference test expects an exception: only_one over two elements")))
+(define (override-of name) (let ([o (assoc name reference-overrides)]) (and o (cadr o))))
 
 (define (run-tutorial dir)
   (define steps (sort (for/list ([d (directory-list (build-path dir "tutorial") #:build? #t)]
@@ -87,20 +95,27 @@
     (define map-file (build-path step "map" (string-append (cadr parts) ".map")))
     (define source-file (build-path step "source" (string-append (caddr parts) ".json")))
     (define name (format "~a/~a" step-name (path->string result)))
-    (define expected (read-json-file (build-path step "result" result)))
-    (define actual (parameterize ([current-data-source (resources->data-source sds)])
-                     (run-one map-file source-file)))
+    (define expected (let ([j (read-json-file (build-path step "result" result))])
+                       (if (eq? (override-of name) 'error)
+                           (hasheq 'resourceType "OperationOutcome" 'issue (list (hasheq 'diagnostics (caddr (assoc name reference-overrides)))))
+                           j)))
+    (define actual (if (eq? (override-of name) 'skip)
+                       'skipped
+                       (parameterize ([current-data-source (resources->data-source sds)])
+                         (run-one map-file source-file))))
     (define outcome
-      (cond [(expected-error? expected)
+      (cond [(eq? actual 'skipped) 'skipped]
+            [(expected-error? expected)
              (if (and (pair? actual) (eq? (car actual) 'error)) 'pass
                  (format "expected an error (~a), got ~v"
                          (hash-ref (car (hash-ref expected 'issue)) 'diagnostics "") actual))]
             [(and (pair? actual) (eq? (car actual) 'error)) (cadr actual)]
             [(jsexpr=? actual expected) 'pass]
             [else (format "mismatch\n    expected ~v\n    actual   ~v" expected actual)]))
-    (if (eq? outcome 'pass)
-        (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))
-        (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome)))))))
+    (case outcome
+      [(skipped) t]
+      [(pass) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
+      [else (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome))))])))
 
 (define (jsexpr=? a b)
   (cond [(and (hash? a) (hash? b))
@@ -148,6 +163,7 @@
   ;; step1 is the simplest map there is: one rule, one string copied
   (define t (run-tutorial vendor))
   (check-false (assoc "step1/step1.source1.json" (tally-failures t)) "tutorial step 1")
-  ;; every other case agrees with the reference; the two disagreements are named above
-  (check-equal? (map car (tally-failures t)) (map car tutorial-disagreements))
+  ;; every case the reference asserts agrees (the overrides above are the reference's own)
+  (check-equal? (tally-failures t) '())
+  (check-equal? (tally-total t) 37)
   (check-true (>= (tally-passed (run-smoke vendor)) 17)))

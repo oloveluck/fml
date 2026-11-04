@@ -8,8 +8,8 @@ the official @tt{mapping.g4} with the FHIRPath grammar inlined, so embedded expr
 FHIRPath ASTs; StructureMap emission; a transform engine over typed resources and logical models;
 and a @tt{.map} file as a module. Corpora: the fhir-test-cases structure-mapping suite (6/6
 executable JSON tests, 15/15 parses), the matchbox engine's maps (43/43 parse, 17/17 run) and the
-FHIR mapping-language tutorial (36/38 expected results; the two differences are named in
-@tt{tests/matchbox-harness.rkt}), and the FHIR R3/R4 inter-version maps (332/332 parse).
+FHIR mapping-language tutorial (37/37 of the results its reference asserts), and the FHIR R3/R4
+inter-version maps (332/332 parse).
 
 Part of the @hyperlink["https://github.com/oloveluck/fhir"]{fhir} family; depends on @tt{fhir},
 @tt{fhir-tx} (@tt{translate} over the terminology service), @tt{fhirpath} and (for its error struct only) @tt{cql}.
@@ -142,9 +142,11 @@ expected results agree).}
 names outside the map is skipped); @tt{let} constants, source types, cardinalities and
 @tt{default} are parsed and dropped; @tt{unmapped for} in a @tt{conceptmap} is parsed only. In
 embedded FHIRPath the @tt{as} operator is read as the target alias; use @tt{.as()}.}
-@item{@bold{Against the reference.} Two tutorial cases differ by design: @tt{only_one} over two
-elements is an error here (the reference keeps the last value), and a @tt{where} calling a function
-FHIRPath does not have is false here (the reference copies the value).}
+@item{@bold{Against the reference.} Every tutorial result the reference engine's own tests assert
+is reproduced. Two result files in the corpus are not among them: one for a map the reference never
+runs (its comment says @tt{isInteger()} is not a FHIRPath function), and one where the reference
+expects the run to throw (@tt{only_one} over two elements, which this engine also makes an error);
+@tt{tests/matchbox-harness.rkt} names both with the evidence.}
 @item{@bold{Versions and formats.} The executor targets R5 (sources from other versions are read
 leniently); @tt{$transform} runs FML text only. The suite's four CDA tests (XML output) and the one
 StructureMap-as-JSON input are skipped.}]

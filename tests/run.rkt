@@ -26,7 +26,7 @@
   ;; floors: every runnable JSON test and every .map stay green; the corpus floors ratchet up
   (define floors (list (list "structure-mapping exec" ep 6) (list "structure-mapping parse" pp pt)
                        (list "matchbox parse" (tally-passed mp) 43)
-                       (list "tutorial" (tally-passed mt) 36)
+                       (list "tutorial" (tally-passed mt) 37)
                        (list "matchbox runs" (tally-passed ms) 17)))
   (define regressed (filter (lambda (f) (< (cadr f) (caddr f))) floors))
   (unless (null? regressed)
