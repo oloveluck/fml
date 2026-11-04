@@ -100,6 +100,12 @@ element (`target-paths`/`trace-target`). The corpora check clean but for three R
 `contributor` and `Composition.code` are R4 elements R5 dropped, `identifer` is a typo in syntax.map.
 `project.rkt` is what fsh loads on demand (`parse-map-file`, `map-structuremap`, `check-project-map`)
 so a project of FSH structures holds its maps; the worked project is fhir-examples/examples/intake-maps.
+Quality pass: `schema.rkt` is the ONE reading of the registry's schema for the engine and the checker
+(a Ty: type symbol | `(prim code)` | #f; `element-of type elem [forced]` -> `(element key list? ty)` or
+#f, choice bases through the schema's `choice-base`, a type without a schema open; `path-type`); the
+transform catalogue is DATA — `transforms` maps a name to `(transform run result-type)` via
+`define-transform`/`define-constructor`, the result type (what picks a choice target's key) a name or a
+procedure of the args, and an unknown transform is reported with the names there are.
 A `#lang fml` module registers its StructureMap with `fhir/registry` (the module system as the FHIR
 registry), and `resolve-structure-map` looks there after the data source; a rule that fails at run time
 (`rule-error`: check, only_one, cast, an unknown group, an unbound variable) raises `exn:fail:diagnostic`

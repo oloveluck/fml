@@ -22,11 +22,10 @@
          "parser/ast.rkt"
          (only-in "transform.rkt" uses-types map-imports run-map)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
+         "schema.rkt"
          (only-in fhir/model/introspect full-field-specs)
-         (only-in fhir/model/schema field-spec? fs-name fs-min fs-ftype ftype-type? ftype-type-name ftype-prim? ftype-prim-code
-                  ftype-raw?)
-         (only-in fhir/model/registry type-registered? primitive-name? type-schema-of)
-         (only-in fhir/model/schema type-schema-fields schema-field-name schema-field-choice-base)
+         (only-in fhir/model/schema field-spec? fs-name fs-min)
+         (only-in fhir/model/registry type-registered?)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value))
 
@@ -39,39 +38,8 @@
           [check-map/examples (->* (fml-map? (listof hash?)) (#:profiles (listof hash?) #:source (or/c string? path? #f))
                                    (listof diagnostic?))]))
 
-;; ---- types ----------------------------------------------------------------------
-;; A Ty is a symbol (a registered complex type) | (prim code) | #f (unknown: stop checking)
-(struct prim (code) #:transparent)
-(define (ty->string ty) (cond [(prim? ty) (prim-code ty)] [(symbol? ty) (symbol->string ty)] [else "?"]))
-(define (ftype->ty ft)
-  (cond [(ftype-prim? ft) (prim (ftype-prim-code ft))]
-        [(ftype-raw? ft) (prim "string")]                       ; an untyped string leaf (`id`)
-        [(and (ftype-type? ft) (type-registered? (ftype-type-name ft))) (ftype-type-name ft)]
-        [else #f]))
-
-;; element-of : type-symbol element-name -> (values found? ty)   a field, or a choice base
-(define (element-of ty name)
-  (define specs (with-handlers ([exn:fail? (lambda (_) #f)]) (full-field-specs ty)))
-  (define sym (string->symbol name))
-  (cond
-    [(not specs) (values #t #f)]                             ; a type we cannot describe: open
-    [(findf (lambda (e) (and (field-spec? e) (eq? (fs-name e) sym))) specs)
-     => (lambda (f) (values #t (ftype->ty (fs-ftype f))))]
-    [(choice-base? ty sym) (values #t #f)]                   ; `value` on a value[x]: its type is the value's
-    [else (values #f #f)]))
-
-;; choice-base? : type-symbol name -> boolean   the schema's choice elements record their base
-(define (choice-base? ty sym)
-  (define sch (type-schema-of ty))
-  (and sch (for/or ([f (in-list (type-schema-fields sch))]) (eq? (schema-field-choice-base f) sym))))
-
-;; path-type : type-symbol dotted-path -> (values missing-element|#f ty)
-(define (path-type ty path)
-  (let loop ([ty ty] [segs (string-split path ".")])
-    (cond [(null? segs) (values #f ty)]
-          [(not (symbol? ty)) (values #f #f)]
-          [else (define-values (found? next) (element-of ty (car segs)))
-                (if found? (loop next (cdr segs)) (values (car segs) ty))])))
+;; Types are fml/schema's: a Ty is a registered type symbol, (prim code), or #f (unknown: nothing to
+;; decide, fail-open); `path-type` walks a dotted path through the schema.
 
 ;; ---- the walk -------------------------------------------------------------------
 ;; A Scope maps a variable name to (cons 'source|'target Ty)
