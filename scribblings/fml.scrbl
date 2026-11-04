@@ -102,6 +102,23 @@ raco fml --tck                               the structure-mapping suite
 @litchar{--format text|json|outcome} chooses how an error is reported. Exit codes: 0, 1 on an FML error or
 a suite regression, 2 on usage.
 
+@section{Limits}
+
+@itemlist[
+@item{@bold{Transforms.} @tt{escape}, @tt{translate} (no ConceptMap support), @tt{dateOp},
+@tt{uuid} and @tt{pointer} raise @tt{unsupported transform}. @tt{cast} copies the value without
+converting; @tt{create('T')} makes an empty object (the type picks a choice key); @tt{reference}
+yields the @tt{Type/id} string, not a Reference.}
+@item{@bold{Groups and rules.} The first group is the entry point; dependent groups are called by
+name within the map. @tt{extends}, the @tt{types} and @tt{type+} group modes and type-based group
+selection are emitted into the StructureMap but not executed; @tt{imports} is emitted but never
+loaded; @tt{let} constants, source types, cardinalities and @tt{default} are parsed and dropped.
+@tt{where} applies; @tt{check} and @tt{log} are emitted, not evaluated. Source list modes
+@tt{first} and @tt{last} work, @tt{not_first}, @tt{not_last} and @tt{only_one} select every match;
+target list modes other than @tt{share} are dropped. A rule reads one source element.}
+@item{@bold{Versions and formats.} The executor targets R5; @tt{$transform} runs FML text only. The
+suite's four CDA tests (XML output) and the one StructureMap-as-JSON input are skipped.}]
+
 @section{Reference}
 
 @subsection[#:style 'unnumbered]{@hash-lang[] @tt{fml}}
