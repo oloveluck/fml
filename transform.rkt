@@ -262,8 +262,12 @@
           [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
                              (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
           [else '()]))
+  ;; `where` sees the rule's alias bound to the candidate (`src.a as a where a.length() <= 20`)
+  (define (with-candidate e) (if (fml-source-variable s) (bind sc (fml-source-variable s) e) sc))
   (define filtered
-    (if (fml-source-where s) (filter (lambda (e) (fp-true? (fml-source-where s) e sc)) base) base))
+    (if (fml-source-where s)
+        (filter (lambda (e) (fp-true? (fml-source-where s) e (with-candidate e))) base)
+        base))
   (case (fml-source-list-mode s)
     [(first) (if (pair? filtered) (list (car filtered)) '())]
     [(last) (if (pair? filtered) (list (last filtered)) '())]
@@ -277,6 +281,20 @@
 
 ;; ---- targets ----------------------------------------------------------------
 (define (run-target c r t sc implicit?)
+  (cond
+    [(fml-target-context t) (run-element-target c r t sc implicit?)]
+    [else
+     ;; a bare invocation target (`evaluate(result, resolve()) as observation`): its value, a source
+     ;; value when the expression yields a node, is bound to the alias
+     (define tr (fml-target-transform t))
+     (define v
+       (match tr
+         [(fml-invoke "evaluate" (list var (fml-fhirpath ast)))
+          (let ([items (fp-items ast (lookup sc var) sc)]) (if (pair? items) (car items) 'null))]
+         [_ (transform-value c r tr sc #f)]))
+     (if (fml-target-variable t) (bind sc (fml-target-variable t) v) sc)]))
+
+(define (run-element-target c r t sc implicit?)
   (define context (lookup sc (fml-target-context t)))
   (unless (tslot? context) (error 'fml "Rule ~s: target context ~a is not a target" (rule-label r) (fml-target-context t)))
   (define tr (fml-target-transform t))
@@ -335,7 +353,12 @@
            [(tslot? src) (let ([js ((tslot-get src))])
                            (format "~a/~a" (hash-ref js 'resourceType "") (hash-ref js 'id "")))]
            [else (error 'fml "Rule ~s: reference() needs a resource, ~a is not one" (rule-label r) v)])]
-    [(fml-invoke "cast" (list v (fml-literal ty))) (coerce (value->jsexpr (lookup sc v)) ty)]
+    [(fml-invoke "cast" (list v (fml-literal ty)))
+     (define raw (value->jsexpr (lookup sc v)))
+     (define out (coerce raw ty))
+     (when (and (string? out) (member ty '("integer" "integer64" "positiveInt" "unsignedInt" "decimal" "boolean")))
+       (error 'fml "Rule ~s: Failed to cast ~v to type ~s" (rule-label r) raw ty))
+     out]
     [(fml-invoke "evaluate" (list v (fml-fhirpath ast)))
      (fp-scalar-over ast (lookup sc v) sc)]
     [(fml-invoke "truncate" (list v (fml-literal n)))

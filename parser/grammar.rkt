@@ -9,12 +9,13 @@
 ;; only parenthesized) expression, `share` carries a listRuleId, and a rule name may be a
 ;; double-quoted string.
 
-fml-doc         : metadata* map-decl? conceptmap* structure* imports* const* fgroup+
+fml-doc         : metadata* map-decl? (conceptmap | structure | imports | const)* fgroup+
 
 ;; the R4 mapping language's embedded concept map (dropped from the R5 g4, still written and run by
 ;; the reference implementation): prefixes name code systems, mappings pair codes
-conceptmap      : /"conceptmap" (DELIM | STRING) /"{" cm-prefix* cm-mapping* /"}"
+conceptmap      : /"conceptmap" (DELIM | STRING) /"{" (cm-prefix | cm-unmapped | cm-mapping)* /"}"
 cm-prefix       : /"prefix" identifier /"=" (DELIM | STRING)
+cm-unmapped     : /"unmapped" /"for" identifier /"=" identifier
 cm-mapping      : identifier /":" cm-code cm-op identifier /":" cm-code
 cm-code         : identifier | DELIM | STRING
 cm-op           : "=" "=" | "=" | "!=" | "<=" | ">=" | "-" | "~" | "<" | ">" 
@@ -39,8 +40,9 @@ type-mode       : /"<<" identifier+ /">>"
 frule           : rule-sources (/"->" rule-targets)? dependent? rule-name? /";"
 rule-name       : DELIM | STRING
 rule-sources    : rule-source (/"," rule-source)*
+;; `where` may precede the alias (the R3/R4 inter-version maps write `where … as v`)
 rule-source     : rule-context source-type? source-cardinality? source-default?
-                  source-list-mode? salias? where-clause? check-clause? log-clause?
+                  source-list-mode? salias? where-clause? salias? check-clause? log-clause?
 rule-context    : identifier (/"." identifier)*
 source-type     : /":" identifier
 source-cardinality : NUMBER /".." upper-bound
@@ -56,6 +58,7 @@ dependent       : /"then" (gcall (/"," gcall)* | /"{" frule* /"}")
 
 rule-targets    : rule-target (/"," rule-target)*
 rule-target     : rule-context (/"=" transform)? salias? target-list-mode?
+                | function-call salias?
 target-list-mode : "first" | "last" | "single" | "share" identifier
 ;; literal | copy-context | invocation — all FHIRPath primaries (incl. the FML dialect's
 ;; double-quoted strings, which the fp literal below admits as DELIM)
@@ -72,10 +75,12 @@ and-expr            : membership-expr     (@and-op membership-expr)*
 membership-expr     : equality-expr       (@membership-op equality-expr)*
 equality-expr       : inequality-expr     (@equality-op inequality-expr)*
 inequality-expr     : union-expr          (@inequality-op union-expr)*
-;; NOTE: the fp `is`/`as` OPERATOR level is omitted here — `create('X') as var` must read as a
-;; target alias, not a type cast (the suite uses the .is()/.as() FUNCTION forms, which remain)
+;; NOTE: the fp `as` OPERATOR is omitted here — `create('X') as var` must read as a target
+;; alias, not a type cast (the .as() FUNCTION form remains); `is` stays (`where $this is Quantity`)
 union-expr          : type-expr           (@union-op type-expr)*
-type-expr           : additive-expr
+type-expr           : additive-expr       (@type-op type-spec)*
+type-op             : "is"
+type-spec           : identifier (/"." identifier)*
 additive-expr       : multiplicative-expr (@additive-op multiplicative-expr)*
 multiplicative-expr : unary-expr          (@multiplicative-op unary-expr)*
 unary-expr          : @polarity-op? postfix-expr
@@ -102,7 +107,7 @@ external-constant   : EXTERNAL
 identifier          : IDENTIFIER | "as" | "is" | "in" | "contains" | "where" | "check" | "log"
                     | "first" | "last" | "single" | "share" | "default" | "div" | "mod"
                     | "source" | "target" | "map" | "uses" | "alias" | "let" | "group" | "extends"
-                    | "conceptmap" | "prefix" | "types" | "queried" | "produced"
+                    | "conceptmap" | "prefix" | "types" | "queried" | "produced" | "unmapped" | "for"
                     | "not_first" | "not_last" | "only_one"
 
 ;; the FML dialect also admits "double-quoted" strings inside expressions (qr2cda-eval's iif)

@@ -106,14 +106,16 @@
               (let ([m (kid s 'source-list-mode)]) (and m (string->symbol (cadr m))))))
 
 (define (lower-target t)
-  (define ctx-ids (map id-of (cdr (kid t 'rule-context))))
+  (define rc (kid t 'rule-context))
+  (define ctx-ids (if rc (map id-of (cdr rc)) '(#f)))
   (define-values (variable share)
     (let ([a (kid t 'salias)] [lm (kid t 'target-list-mode)])
       (values (and a (id-of (cadr a)))
               (and lm (equal? (cadr lm) "share") (id-of (caddr lm))))))
-  (fml-target (car ctx-ids)
+  (fml-target (car ctx-ids)                              ; #f: a bare invocation target
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
-              (let ([tr (kid t 'transform)]) (and tr (lower-transform tr)))
+              (let ([tr (kid t 'transform)] [fc (kid t 'function-call)])
+                (cond [tr (lower-transform tr)] [fc (lower-transform (list 'transform fc))] [else #f]))
               variable share))
 
 ;; a transform is a lowered FHIRPath — recognise the special shapes on the AST:
