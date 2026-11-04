@@ -8,8 +8,9 @@
 ;;;   groups   : (Listof fml-group)   — the first group is the entry point
 ;;;   conceptmaps : (Listof fml-conceptmap) — the R4-era embedded `conceptmap "name" { … }` blocks
 ;;; A FmlConceptmap is (fml-conceptmap name prefixes mappings):
-;;;   prefixes : (Hash prefix-string -> system-url) ; mappings : (Listof (vector src-system src-code
-;;;   relationship tgt-system tgt-code)), relationship the operator as written ("==", "=", "-", …)
+;;;   prefixes : (Hash prefix-string -> system-url) ; mappings : (Listof CmMapping)
+;;; A CmMapping is (cm-mapping source code op target target-code): one `s:code op t:code` line, the
+;;;   systems resolved through the prefixes, `op` the operator as written ("==", "=", "-", …)
 ;;; A FmlGroup is (fml-group name params extends flags rules):
 ;;;   params   : (Listof fml-param)   — (mode 'source|'target, name, type|#f)
 ;;; A FmlRule is (fml-rule sources targets dependents nested name):
@@ -34,10 +35,11 @@
 (provide (struct-out fml-map) (struct-out fml-use) (struct-out fml-group) (struct-out fml-param)
          (struct-out fml-rule) (struct-out fml-source) (struct-out fml-target)
          (struct-out fml-call) (struct-out fml-literal) (struct-out fml-fhirpath)
-         (struct-out fml-invoke) (struct-out fml-var) (struct-out fml-conceptmap))
+         (struct-out fml-invoke) (struct-out fml-var) (struct-out fml-conceptmap) (struct-out cm-mapping))
 
 (struct fml-map      (url name metadata uses imports groups conceptmaps) #:prefab)
 (struct fml-conceptmap (name prefixes mappings)                 #:prefab)
+(struct cm-mapping   (source code op target target-code)          #:prefab)
 (struct fml-use      (url alias mode)                        #:prefab) ; mode 'source|'target
 (struct fml-group    (name params extends flags rules)       #:prefab)
 (struct fml-param    (mode name type)                        #:prefab)

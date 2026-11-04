@@ -92,7 +92,7 @@
                   (for/list ([m (in-list (kids c 'cm-mapping))])
                     (match (cdr m)
                       [(list s sc op t tc)
-                       (vector (system-of s) (code-of sc) (apply string-append (cdr op)) (system-of t) (code-of tc))]))))
+                       (cm-mapping (system-of s) (code-of sc) (apply string-append (cdr op)) (system-of t) (code-of tc))]))))
 (define (assoc-ref al k) (cond [(assoc k al) => cdr] [else #f]))
 
 (define (lower-structure s)

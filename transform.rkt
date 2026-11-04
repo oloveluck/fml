@@ -465,10 +465,10 @@
        (define cm (findf (lambda (cm) (equal? (fml-conceptmap-name cm) (substring map-url 1)))
                          (fml-map-conceptmaps (ctx-map c))))
        (unless cm (rule-error r "no conceptmap ~s in this map" map-url))
-       (define m (findf (lambda (m) (and (equal? (vector-ref m 1) code)
-                                         (or (not system) (equal? (vector-ref m 0) system))))
+       (define m (findf (lambda (m) (and (equal? (cm-mapping-code m) code)
+                                         (or (not system) (equal? (cm-mapping-source m) system))))
                         (fml-conceptmap-mappings cm)))
-       (if m (values (vector-ref m 3) (vector-ref m 4) #f) (values #f #f #f))]
+       (if m (values (cm-mapping-target m) (cm-mapping-target-code m) #f) (values #f #f #f))]
       [else
        (define ps (translate/json (current-terminology-resolver) map-url code system))
        (define match-part

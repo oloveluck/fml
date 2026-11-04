@@ -41,15 +41,15 @@
 (define (conceptmap->jsexpr cm)
   (define by-pair
     (for/fold ([h (hash)]) ([m (in-list (fml-conceptmap-mappings cm))])
-      (hash-update h (cons (vector-ref m 0) (vector-ref m 3)) (lambda (l) (append l (list m))) '())))
+      (hash-update h (cons (cm-mapping-source m) (cm-mapping-target m)) (lambda (l) (append l (list m))) '())))
   (hasheq 'resourceType "ConceptMap" 'id (fml-conceptmap-name cm) 'url (string-append "#" (fml-conceptmap-name cm))
           'status "active"
           'group (for/list ([(pair ms) (in-hash by-pair)])
                    (hasheq 'source (car pair) 'target (cdr pair)
                            'element (for/list ([m (in-list ms)])
-                                      (hasheq 'code (vector-ref m 1)
-                                              'target (list (hasheq 'code (vector-ref m 4)
-                                                                    'relationship (relationship-of (vector-ref m 2))))))))))
+                                      (hasheq 'code (cm-mapping-code m)
+                                              'target (list (hasheq 'code (cm-mapping-target-code m)
+                                                                    'relationship (relationship-of (cm-mapping-op m))))))))))
 (define (relationship-of op)
   (case op [("==" "=") "equivalent"] [("-" "~") "related-to"] [("<=" "<") "source-is-narrower-than-target"]
            [(">=" ">") "source-is-broader-than-target"] [("!=") "not-related-to"] [else "related-to"]))
@@ -156,8 +156,8 @@
   (define name (or (jref c 'id) (let ([u (jref c 'url "")]) (if (string-prefix? u "#") (substring u 1) u))))
   (fml-conceptmap name (hash)
                   (for*/list ([g (in-list (jlist c 'group))] [e (in-list (jlist g 'element))] [t (in-list (jlist e 'target))])
-                    (vector (jref g 'source) (jref e 'code) (op-of (or (jref t 'relationship) (jref t 'equivalence)))
-                            (jref g 'target) (jref t 'code)))))
+                    (cm-mapping (jref g 'source) (jref e 'code) (op-of (or (jref t 'relationship) (jref t 'equivalence)))
+                                (jref g 'target) (jref t 'code)))))
 (define (op-of rel)
   (case rel
     [("equivalent" "equal") "=="]
