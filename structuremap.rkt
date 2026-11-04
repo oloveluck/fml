@@ -103,12 +103,10 @@
     (let ([tr (fml-target-transform t)])
       (cond
         [(not tr) (values #f #f)]
-        [(fml-literal? tr) (values "copy" (list (hasheq 'valueString (fml-literal-value tr))))]
+        [(fml-literal? tr) (values "copy" (list (arg->parameter tr)))]
         ;; a numeric or boolean literal is a copy of a typed value (as the reference writes it)
-        [(and (fml-fhirpath? tr) (fp-lit? (fml-fhirpath-ast tr))
-              (let ([v (fp-lit-value (fml-fhirpath-ast tr))]) (or (exact-integer? v) (boolean? v))))
-         (values "copy" (list (arg->parameter tr)))]
-        [(fml-fhirpath? tr) (values "evaluate" (list (hasheq 'valueString (fhirpath->string (fml-fhirpath-ast tr)))))]
+        [(typed-literal? tr) (values "copy" (list (arg->parameter tr)))]
+        [(fml-fhirpath? tr) (values "evaluate" (list (arg->parameter tr)))]
         [(fml-var? tr) (values "copy" (list (hasheq 'valueId (fml-var-name tr))))]
         [(fml-invoke? tr) (values (fml-invoke-name tr) (map arg->parameter (fml-invoke-args tr)))]
         [else (values #f #f)])))
@@ -124,15 +122,21 @@
                        (and (pair? ms) ms))
            'listRuleId (fml-target-share t))))
 
-;; an invocation argument as a StructureMap parameter: a variable is valueId, a string literal
-;; valueString, a numeric/boolean literal its typed value, any other expression its text
+;; How a transform's argument crosses into a StructureMap parameter (and back, target<-jsexpr):
+;;   a variable, a string             <-> valueId
+;;   (fml-literal s)                  <-> valueString
+;;   (fml-fhirpath (fp-lit n)) n int  <-> valueInteger n ;  a boolean  <-> valueBoolean
+;;   (fml-fhirpath ast)               <-> valueString (its text; read back as an expression where
+;;                                        the transform takes one — evaluate's last parameter)
+(define (typed-literal? a)
+  (and (fml-fhirpath? a) (fp-lit? (fml-fhirpath-ast a))
+       (let ([v (fp-lit-value (fml-fhirpath-ast a))]) (or (exact-integer? v) (boolean? v)))))
 (define (arg->parameter a)
   (cond [(fml-literal? a) (hasheq 'valueString (fml-literal-value a))]
-        [(fml-fhirpath? a)
-         (define ast (fml-fhirpath-ast a))
-         (cond [(and (fp-lit? ast) (exact-integer? (fp-lit-value ast))) (hasheq 'valueInteger (fp-lit-value ast))]
-               [(and (fp-lit? ast) (boolean? (fp-lit-value ast))) (hasheq 'valueBoolean (fp-lit-value ast))]
-               [else (hasheq 'valueString (fhirpath->string ast))])]
+        [(typed-literal? a)
+         (define v (fp-lit-value (fml-fhirpath-ast a)))
+         (if (boolean? v) (hasheq 'valueBoolean v) (hasheq 'valueInteger v))]
+        [(fml-fhirpath? a) (hasheq 'valueString (fhirpath->string (fml-fhirpath-ast a)))]
         [else (hasheq 'valueId a)]))
 
 ;; ---- StructureMap -> AST ------------------------------------------------------
