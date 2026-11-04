@@ -7,6 +7,9 @@
 ;;;   raco fml <file.map> --transform <src.json>  run the map over a source resource (R5), print the target
 ;;;       [--structures <file|dir>]               StructureDefinitions the map's `uses` resolve in
 ;;;                                               (logical models: a JSON file, a Bundle, or a directory)
+;;;   raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...
+;;;                                               the map against its structures: findings positioned in
+;;;                                               the FML; with examples, each result validated
 ;;;   raco fml --parse-corpus <dir>               parse every .map under a directory, report the failures
 ;;;   raco fml --tck                              run the vendored corpora (fhir-test-cases, matchbox, tutorial)
 ;;; Exit codes: 0 ok · 1 FML error / regression · 2 usage.
@@ -16,13 +19,15 @@
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap fml->structuremap structuremap->fml)
          (only-in fml/transform run-map uses-types)
+         (only-in fml/check check-map check-map/examples)
+         (only-in fhir/diagnostic diagnostic-severity)
          (only-in cql/error cql-error-string cql-error-diagnostic cql-error-message)
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc emit-diagnostics format-flag)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
 
-(provide compile-file transform-file parse-corpus-dir)
+(provide compile-file transform-file parse-corpus-dir check-file)
 
 ;; parse-file : path-string -> fml-map   (or exit 1)
 ;; report : diagnostic text -> exit 1   (format from --format)
@@ -68,6 +73,31 @@
     (unless (ok? r) (eprintf "~a: ~a\n" src-file (validation-error-message (err-error r))) (exit 1))
     (displayln (jsexpr->string (run-map m (ok-value r))))))
 
+;; check-file : map-file options -> void   the static findings, then the examples validated; exit 1 on an error
+(define (check-file file opts)
+  (dynamic-require 'fhir/r5/schemas #f)
+  (define m (parse-file file))
+  (define src (file->string file))
+  (define structures (hash-ref opts "--structures" #f))
+  (define examples
+    (let ([e (hash-ref opts "--examples" #f)])
+      (cond [(not e) '()]
+            [(directory-exists? e) (for/list ([f (in-directory e)] #:when (regexp-match? #px"\\.json$" (path->string f)))
+                                     (call-with-input-file f read-json))]
+            [else (list (call-with-input-file e read-json))])))
+  (define profiles (for/list ([p (in-list (hash-ref opts "--profile" '()))]) (call-with-input-file p read-json)))
+  (parameterize ([current-data-source
+                  (cond [(not structures) (current-data-source)]
+                        [(directory-exists? structures) (directory->data-source structures)]
+                        [else (resources->data-source (list (call-with-input-file structures read-json)))])])
+    (define ds (append (check-map m #:source file)
+                       (if (null? examples) '() (check-map/examples m examples #:profiles profiles #:source file))))
+    (emit-diagnostics ds #:format (current-format) #:text-of (lambda (_) src))
+    (when (eq? (current-format) 'text)
+      (eprintf "~a: ~a finding~a~a\n" file (length ds) (if (= 1 (length ds)) "" "s")
+               (if (null? examples) "" (format ", ~a example~a validated" (length examples) (if (= 1 (length examples)) "" "s")))))
+    (when (ormap (lambda (d) (eq? (diagnostic-severity d) 'error)) ds) (exit 1))))
+
 ;; parse-corpus-dir : path-string -> void   parse every .map under dir; the failures, a count; exit 1 on any
 (define (parse-corpus-dir dir)
   (define t ((dynamic-require 'fml/tests/matchbox-harness 'parse-corpus) dir))
@@ -80,7 +110,7 @@
 
 (define (usage [code 2])                             ; --help: stdout, exit 0
   ((if (zero? code) printf eprintf)
-   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>]]\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
+   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
   (exit code))
 
 (module+ main
@@ -100,6 +130,13 @@
     [(null? args) (usage)]
     [(equal? (car args) "--tck") (dynamic-require '(submod fml/tests/run main) #f)]
     [(and (equal? (car args) "--parse-corpus") (= (length args) 2)) (parse-corpus-dir (cadr args))]
+    [(and (equal? (car args) "check") (pair? (cdr args)) (not (regexp-match? #rx"^-" (cadr args))))
+     (define opts (let loop ([as (cddr args)] [h (hash)])
+                    (cond [(null? as) h]
+                          [(and (member (car as) '("--structures" "--examples")) (pair? (cdr as))) (loop (cddr as) (hash-set h (car as) (cadr as)))]
+                          [(and (equal? (car as) "--profile") (pair? (cdr as))) (loop (cddr as) (hash-update h "--profile" (lambda (l) (append l (list (cadr as)))) '()))]
+                          [else (usage)])))
+     (check-file (cadr args) opts)]
     [(regexp-match? #rx"^-" (car args)) (usage)]
     [(= (length args) 1) (compile-file (car args))]
     [else

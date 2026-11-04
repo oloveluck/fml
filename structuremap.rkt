@@ -109,6 +109,15 @@
         [(fml-invoke? tr) (values (fml-invoke-name tr) (map arg->parameter (fml-invoke-args tr)))]
         [else (values #f #f)])))
 
+  (drop-false
+   (hasheq 'context (fml-target-context t)
+           'element (fml-target-element t)
+           'variable (fml-target-variable t)
+           'transform transform
+           'parameter params
+           'listMode (and (fml-target-share t) (list "share"))
+           'listRuleId (fml-target-share t))))
+
 ;; an invocation argument as a StructureMap parameter: a variable is valueId, a string literal
 ;; valueString, a numeric/boolean literal its typed value, any other expression its text
 (define (arg->parameter a)
@@ -201,14 +210,6 @@
       [else (fml-invoke tr (for/list ([p (in-list ps)] [i (in-naturals 1)]) (arg p (= i (length ps)))))]))
   (define share (and (member "share" (jlist t 'listMode)) (jref t 'listRuleId)))
   (fml-target (jref t 'context) (jref t 'element) transform (jref t 'variable) share))
-  (drop-false
-   (hasheq 'context (fml-target-context t)
-           'element (fml-target-element t)
-           'variable (fml-target-variable t)
-           'transform transform
-           'parameter params
-           'listMode (and (fml-target-share t) (list "share"))
-           'listRuleId (fml-target-share t))))
 
 (module+ test
   (require rackunit (only-in "parser/parse.rkt" parse-fml) (only-in fhir/result/result ok-value))

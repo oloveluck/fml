@@ -32,11 +32,12 @@ jobs:
             "https://github.com/oloveluck/fhir.git?path=fhir" \
             "https://github.com/oloveluck/fhir.git?path=fhir-spec" \
             "https://github.com/oloveluck/fhir.git?path=fhir-tx" \
+            "https://github.com/oloveluck/fhir.git?path=fhir-validation" \
             "https://github.com/oloveluck/fhirpath.git" \
             "https://github.com/oloveluck/vcl.git" \
             "https://github.com/oloveluck/cql.git"
       - name: Test the engine and the parser
-        run: raco test transform.rkt parser/parse.rkt structuremap.rkt registry.rkt operations.rkt tests/harness.rkt tests/matchbox-harness.rkt
+        run: raco test transform.rkt parser/parse.rkt structuremap.rkt registry.rkt operations.rkt check.rkt tests/harness.rkt tests/matchbox-harness.rkt
       - name: Run the mapping corpora (fhir-test-cases, matchbox, the FML tutorial)
         run: raco fml --tck
       - name: Parse the FHIR inter-version maps (informational; not vendored, no license)

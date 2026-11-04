@@ -15,7 +15,7 @@
          (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
          (only-in cql/error cql-error)
-         (only-in fhir/diagnostic exn->diagnostic diagnostic->string))
+         (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc))
 
 (provide (contract-out
           ;; (ok fml-map) | (err cql-error) — a parse error carries its diagnostic (positions in `source`)
@@ -25,7 +25,33 @@
   (with-handlers ([exn:fail? (lambda (e)
                                (define d (exn->diagnostic e 'fml #:source source))
                                (err (cql-error 'parse (diagnostic->string d) d)))])
-    (ok (lower-doc (g:parse-to-datum (tokenize (open-input-string src)))))))
+    (define-values (d locs) (syntax->datum/locs (g:parse (tokenize (open-input-string src)))))
+    (parameterize ([current-locs locs] [current-source (and source (if (path? source) (path->string source) source))])
+      (ok (lower-doc d)))))
+
+;; ---- positions ------------------------------------------------------------------
+;; The brag tree keeps the tokens' positions; rules, sources and targets remember theirs
+;; (fhir/diagnostic attach-loc!, as FSH rules and CQL definitions do), so a check can point at them.
+(define current-locs (make-parameter (hasheq)))
+(define current-source (make-parameter #f))
+(define located-tags '(fgroup frule rule-source rule-target))
+;; syntax->datum/locs : syntax -> (values datum (hasheq datum-node -> (list line col pos span)))
+(define (syntax->datum/locs stx)
+  (define locs (make-hasheq))
+  (define (walk s)
+    (define l (syntax->list s))
+    (cond [l (define d (map walk l))
+             (when (and (pair? d) (memq (car d) located-tags) (syntax-line s))
+               (hash-set! locs d (list (syntax-line s) (syntax-column s) (syntax-position s) (syntax-span s))))
+             d]
+          [else (syntax-e s)]))
+  (define d (walk stx))
+  (values d locs))
+;; located! : ast-node datum-node -> ast-node   the node remembers where its datum was parsed
+(define (located! node d)
+  (define l (hash-ref (current-locs) d #f))
+  (when l (attach-loc! node (loc (current-source) (car l) (let ([c (cadr l)]) (and c (add1 c))) (caddr l) (cadddr l))))
+  node)
 
 ;; ---- helpers over brag datum trees ------------------------------------------
 (define ((tagged? tag) x) (and (pair? x) (eq? (car x) tag)))
@@ -74,7 +100,8 @@
            (let ([a (kid s 'structure-alias)]) (and a (id-of (cadr a))))
            (string->symbol (cadr (kid s 'model-mode)))))
 
-(define (lower-group g)
+(define (lower-group g) (located! (lower-group* g) g))
+(define (lower-group* g)
   (fml-group (id-of (cadr g))
              (for/list ([p (in-list (kids (kid g 'parameters) 'parameter))])
                (fml-param (string->symbol (cadr (kid p 'input-mode)))
@@ -84,7 +111,8 @@
              (let ([tm (kid g 'type-mode)]) (if tm (map id-of (cdr tm)) '()))
              (map lower-rule (kids g 'frule))))
 
-(define (lower-rule r)
+(define (lower-rule r) (located! (lower-rule* r) r))
+(define (lower-rule* r)
   (define-values (dependents nested)
     (let ([dep (kid r 'dependent)])
       (cond [(not dep) (values '() '())]
@@ -97,6 +125,8 @@
 
 (define (lower-source s)
   (define ctx-ids (map id-of (cdr (kid s 'rule-context))))
+  (located! (lower-source* s ctx-ids) s))
+(define (lower-source* s ctx-ids)
   (fml-source (car ctx-ids)
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
               (let ([a (kid s 'salias)]) (and a (id-of (cadr a))))
@@ -105,7 +135,8 @@
               (let ([l (kid s 'log-clause)]) (and l (fp-of (cadr l))))
               (let ([m (kid s 'source-list-mode)]) (and m (string->symbol (cadr m))))))
 
-(define (lower-target t)
+(define (lower-target t) (located! (lower-target* t) t))
+(define (lower-target* t)
   (define rc (kid t 'rule-context))
   (define ctx-ids (if rc (map id-of (cdr rc)) '(#f)))
   (define-values (variable share)
@@ -158,6 +189,7 @@
                   '()))))
 
 (module+ test
+  (require (only-in fhir/diagnostic attached-loc loc-line loc-column loc-source))
   (require rackunit (only-in fhir/result/result ok-value)
            (only-in fhirpath/parser/ast fp-binop fp-invoke fp-lit))
   (define m (ok-value (parse-fml #<<EOF
@@ -190,4 +222,10 @@ EOF
   (define r4 (cadddr (fml-group-rules g)))
   (check-equal? (length (fml-rule-nested r4)) 1)
   (check-equal? (fml-target-transform (car (fml-rule-targets (car (fml-rule-nested r4)))))
-                (fml-var "code")))
+                (fml-var "code"))
+  ;; rules, sources and targets remember their positions (1-based line and column)
+  (define l2 (attached-loc r2))
+  (check-equal? (list (loc-line l2) (loc-column l2)) '(7 3))
+  (check-equal? (loc-line (attached-loc (car (fml-rule-sources r2)))) 7)
+  (check-true (> (loc-column (attached-loc (car (fml-rule-targets r2)))) 50))
+  (check-equal? (loc-line (attached-loc (car (fml-rule-nested r4)))) 10))

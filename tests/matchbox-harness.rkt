@@ -18,6 +18,8 @@
          (only-in "../parser/ast.rkt" fml-map fml-map? fml-map-url fml-map-conceptmaps fml-conceptmap fml-conceptmap-prefixes)
          (only-in "../structuremap.rkt" fml->structuremap structuremap->fml)
          (only-in "../transform.rkt" run-map uses-types resolve-structure-map)
+         (only-in "../check.rkt" check-map)
+         (only-in fhir/diagnostic diagnostic-severity diagnostic->string)
          (only-in fhirpath/parser/parse parse-fhirpath)
          (only-in fhirpath/print fhirpath->string)
          (only-in fhir/serialize/from-json from-json)
@@ -43,6 +45,9 @@
           ;; run-tutorial/structuremap : matchbox-dir -> tally   the tutorial again, each map taken
           ;; from the reference's StructureMap resource (map/<step>.json) by canonical — no FML read
           [run-tutorial/structuremap (-> path-string? tally?)]
+          ;; check-corpus : dir -> tally   every map checked against its structures: a map passes when
+          ;; the check reports no error (the tutorial's within its step's logical models)
+          [check-corpus (-> path-string? tally?)]
           ;; compare-reference-structuremaps : matchbox-dir -> tally   our StructureMap for each
           ;; tutorial map against the reference's, rule by rule (metadata and R4-only fields dropped,
           ;; FHIRPath text normalised through parse and print)
@@ -95,6 +100,24 @@
       [(skip) t]
       [(pass) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
       [else (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome))))])))
+
+(define (check-corpus dir)
+  (for/fold ([t (tally 0 0 '())]) ([f (in-list (map-files dir))])
+    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
+    (define logical (let ([d (build-path (path-only f) 'up "logical")]) (and (directory-exists? d) d)))
+    (define sds (if logical
+                    (for/list ([g (directory-list logical #:build? #t)] #:when (regexp-match? #px"\\.json$" (path->string g))) (read-json-file g))
+                    '()))
+    (define r (parse-fml (file->string f) #:source name))
+    (cond
+      [(not (ok? r)) t]
+      [else
+       (define ds (with-handlers ([exn:fail? (lambda (e) (list (format "error: ~a" (exn-message e))))])
+                    (parameterize ([current-data-source (resources->data-source sds)])
+                      (map diagnostic->string (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (check-map (ok-value r) #:source name))))))
+       (if (null? ds)
+           (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))
+           (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name (string-join ds "\n    "))))))])))
 
 ;; the reference's StructureMap (matchbox, R4-flavoured) and ours, comparable: ids/metadata and
 ;; R4-only fields dropped, unnamed rules unnamed on both sides, FHIRPath text re-printed
