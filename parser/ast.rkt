@@ -19,7 +19,8 @@
 ;;;   nested     : (Listof fml-rule)    — `then { … }` block
 ;;; A FmlSource is (fml-source context element variable where check log-expr list-mode):
 ;;;   where/check/log-expr : (fml-fhirpath ast)|#f ; list-mode : 'first|'last|'only_one|#f
-;;; A FmlTarget is (fml-target context element transform variable share):
+;;; A FmlTarget is (fml-target context element transform variable share list-mode):
+;;   list-mode : 'first|'last|'single|#f (the target list modes other than share; accepted, kept)
 ;;;   transform : #f (plain create/copy of the element)
 ;;;             | (fml-literal value)          — 'text' / "text" literal assignment
 ;;;             | (fml-fhirpath ast)           — = (expr) : a REAL FHIRPath AST (fp-* prefabs),
@@ -42,7 +43,7 @@
 (struct fml-param    (mode name type)                        #:prefab)
 (struct fml-rule     (sources targets dependents nested name) #:prefab)
 (struct fml-source   (context element variable where check log-expr list-mode) #:prefab)
-(struct fml-target   (context element transform variable share) #:prefab)
+(struct fml-target   (context element transform variable share list-mode) #:prefab)
 (struct fml-call     (name args)                             #:prefab)
 (struct fml-literal  (value)                                 #:prefab)
 (struct fml-fhirpath (ast)                                   #:prefab)

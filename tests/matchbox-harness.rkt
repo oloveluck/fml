@@ -44,7 +44,11 @@
           [roundtrip-corpus (-> path-string? tally?)]
           ;; run-tutorial/structuremap : matchbox-dir -> tally   the tutorial again, each map taken
           ;; from the reference's StructureMap resource (map/<step>.json) by canonical — no FML read
+          ;; (several of those resources predate their .map: stale conditions, a missing rule)
           [run-tutorial/structuremap (-> path-string? tally?)]
+          ;; run-tutorial/own-structuremap : matchbox-dir -> tally   the tutorial from OUR emitted
+          ;; StructureMap resources, resolved by canonical: the resource is the executable form
+          [run-tutorial/own-structuremap (-> path-string? tally?)]
           ;; check-corpus : dir -> tally   every map checked against its structures: a map passes when
           ;; the check reports no error (the tutorial's within its step's logical models)
           [check-corpus (-> path-string? tally?)]
@@ -130,9 +134,12 @@
       (values k (cond [(eq? k 'parameter) (map param v)] [else v]))))
   (define (source s)
     (for/hasheq ([(k v) (in-hash s)]) (values k (if (memq k '(condition check logMessage)) (fp v) v))))
+  (define (dependent d)                                        ; R4 wrote `variable`, R5 `parameter`
+    (for/hasheq ([(k v) (in-hash d)])
+      (if (eq? k 'variable) (values 'parameter (map (lambda (id) (hasheq 'valueId id)) v)) (values k v))))
   (define (rule r)
-    (for/hasheq ([(k v) (in-hash r)] #:unless (and (eq? k 'name) (regexp-match? #px"^rule-?[0-9]*$" v)))
-      (values k (case k [(source) (map source v)] [(target) (map target v)] [(rule) (map rule v)] [else v]))))
+    (for/hasheq ([(k v) (in-hash r)] #:unless (memq k '(name documentation)))
+      (values k (case k [(source) (map source v)] [(target) (map target v)] [(rule) (map rule v)] [(dependent) (map dependent v)] [else v]))))
   (define (group g)
     (for/hasheq ([(k v) (in-hash g)] #:unless (or (memq k '(documentation)) (and (eq? k 'typeMode) (equal? v "none"))))
       (values k (if (eq? k 'rule) (map rule v) v))))
@@ -179,6 +186,15 @@
 
 (define (run-tutorial dir) (run-tutorial-with dir map-from-file))
 (define (run-tutorial/structuremap dir) (run-tutorial-with dir map-from-structuremap))
+(define (run-tutorial/own-structuremap dir) (run-tutorial-with dir map-from-own-structuremap))
+;; the map emitted as a StructureMap resource, then resolved by canonical from the data source
+(define (map-from-own-structuremap map-file sds)
+  (define-values (m0 _) (map-from-file map-file sds))
+  (define sm (fml->structuremap m0))
+  (define m (parameterize ([current-data-source (resources->data-source (cons sm sds))])
+              (resolve-structure-map (hash-ref sm 'url))))
+  (unless m (error 'structuremap "~a: not resolved by canonical" map-file))
+  (values m (list sm)))
 
 ;; a map loader : map-file sds -> (values fml-map extra-resources)   the FML file, or the reference's
 ;; StructureMap next to it resolved by its canonical from the data source
@@ -287,4 +303,6 @@
   (define rt (roundtrip-corpus vendor))
   (check-equal? (tally-failures rt) '())
   (define ts (run-tutorial/structuremap vendor))
-  (check-false (assoc "step1/step1.source1.json" (tally-failures ts)) "tutorial step 1 from its StructureMap"))
+  (check-false (assoc "step1/step1.source1.json" (tally-failures ts)) "tutorial step 1 from its StructureMap")
+  ;; from our own StructureMap resources every case agrees, as from the FML
+  (check-equal? (tally-failures (run-tutorial/own-structuremap vendor)) '()))

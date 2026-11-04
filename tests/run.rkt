@@ -6,7 +6,8 @@
 (require racket/runtime-path
          (only-in "harness.rkt" run-fml-suite)
          (only-in "matchbox-harness.rkt" parse-corpus run-tutorial run-smoke roundtrip-corpus check-corpus
-                  run-tutorial/structuremap compare-reference-structuremaps tally-passed tally-total tally-failures))
+                  run-tutorial/structuremap run-tutorial/own-structuremap compare-reference-structuremaps
+                  tally-passed tally-total tally-failures))
 (define-runtime-path vendor "vendor/structure-mapping")
 (define-runtime-path matchbox "vendor/matchbox")
 
@@ -28,8 +29,10 @@
   (define rt2 (roundtrip-corpus matchbox))
   (report "StructureMap round trip (fhir-test-cases)" rt1)
   (report "StructureMap round trip (matchbox)" rt2)
+  (define to (run-tutorial/own-structuremap matchbox))
+  (report "FML tutorial from our StructureMap resources" to)
   (define ts (run-tutorial/structuremap matchbox))
-  (report "FML tutorial from the reference's StructureMaps" ts)
+  (report "FML tutorial from the reference's StructureMaps (several predate their .map)" ts)
   (define cs (compare-reference-structuremaps matchbox))
   (report "our StructureMap vs the reference's, by rule" cs)
   (define ck1 (check-corpus vendor))
@@ -41,10 +44,11 @@
                        (list "matchbox parse" (tally-passed mp) 43)
                        (list "tutorial" (tally-passed mt) 37)
                        (list "matchbox runs" (tally-passed ms) 17)
-                       (list "round trip" (+ (tally-passed rt1) (tally-passed rt2)) 0)
-                       (list "tutorial from StructureMaps" (tally-passed ts) 0)
+                       (list "round trip" (+ (tally-passed rt1) (tally-passed rt2)) 58)
+                       (list "tutorial from our StructureMaps" (tally-passed to) 37)
+                       (list "tutorial from the reference's StructureMaps" (tally-passed ts) 30)
                        (list "StructureMap vs reference" (tally-passed cs) 0)
-                       (list "check" (+ (tally-passed ck1) (tally-passed ck2)) 0)))
+                       (list "check" (+ (tally-passed ck1) (tally-passed ck2)) 47)))
   (define regressed (filter (lambda (f) (< (cadr f) (caddr f))) floors))
   (unless (null? regressed)
     (for ([f regressed]) (eprintf "FML conformance regressed: ~a ~a < floor ~a\n" (car f) (cadr f) (caddr f)))

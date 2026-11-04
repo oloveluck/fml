@@ -104,6 +104,10 @@
       (cond
         [(not tr) (values #f #f)]
         [(fml-literal? tr) (values "copy" (list (hasheq 'valueString (fml-literal-value tr))))]
+        ;; a numeric or boolean literal is a copy of a typed value (as the reference writes it)
+        [(and (fml-fhirpath? tr) (fp-lit? (fml-fhirpath-ast tr))
+              (let ([v (fp-lit-value (fml-fhirpath-ast tr))]) (or (exact-integer? v) (boolean? v))))
+         (values "copy" (list (arg->parameter tr)))]
         [(fml-fhirpath? tr) (values "evaluate" (list (hasheq 'valueString (fhirpath->string (fml-fhirpath-ast tr)))))]
         [(fml-var? tr) (values "copy" (list (hasheq 'valueId (fml-var-name tr))))]
         [(fml-invoke? tr) (values (fml-invoke-name tr) (map arg->parameter (fml-invoke-args tr)))]
@@ -115,7 +119,9 @@
            'variable (fml-target-variable t)
            'transform transform
            'parameter params
-           'listMode (and (fml-target-share t) (list "share"))
+           'listMode (let ([ms (append (if (fml-target-list-mode t) (list (symbol->string (fml-target-list-mode t))) '())
+                                       (if (fml-target-share t) (list "share") '()))])
+                       (and (pair? ms) ms))
            'listRuleId (fml-target-share t))))
 
 ;; an invocation argument as a StructureMap parameter: a variable is valueId, a string literal
@@ -209,7 +215,8 @@
       [(and (equal? tr "evaluate") (= 1 (length ps)) (jref (car ps) 'valueString)) => (lambda (s) (fml-fhirpath (parse-fhirpath s)))]
       [else (fml-invoke tr (for/list ([p (in-list ps)] [i (in-naturals 1)]) (arg p (= i (length ps)))))]))
   (define share (and (member "share" (jlist t 'listMode)) (jref t 'listRuleId)))
-  (fml-target (jref t 'context) (jref t 'element) transform (jref t 'variable) share))
+  (define mode (for/or ([m (in-list (jlist t 'listMode))]) (and (member m '("first" "last" "single")) (string->symbol m))))
+  (fml-target (jref t 'context) (jref t 'element) transform (jref t 'variable) share mode))
 
 (module+ test
   (require rackunit (only-in "parser/parse.rkt" parse-fml) (only-in fhir/result/result ok-value))
@@ -227,7 +234,8 @@
                "imports \"http://x/other\"\n"
                "group entry(source src : QR, target tgt : Patient) extends base <<types>> {\n"
                "  src.item as item where linkId = 'x' check (item.exists()) log('hi') -> tgt.name as n share nm, n.text = (item.answer.valueString) then helper(item, n) \"r1\";\n"
-               "  src.id first as i -> tgt.id = truncate(i, 20), tgt.gender = 'female', tgt.active = true, tgt.deceasedBoolean = i;\n"
+               "  src.id first as i -> tgt.id = truncate(i, 20), tgt.gender = 'female', tgt.active = true, tgt.deceasedBoolean = i, tgt.multipleBirthInteger = 2;\n"
+               "  src.name as nm -> tgt.name as t first then { nm.text as x -> t.text = x; };\n"
                "  src -> tgt.birthDate = cast(src, 'date'), tgt.text = create('Narrative') as nar then { src -> nar.status = 'generated'; };\n"
                "  src.item as item -> evaluate(item, answer.first()) as ans;\n"
                "}\n"

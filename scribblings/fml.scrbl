@@ -1,5 +1,6 @@
 #lang scribble/manual
-@(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/transform fml/operations))
+@(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/transform fml/operations
+                     fml/registry fml/check fml/project))
 
 @title{fml: the FHIR Mapping Language for Racket}
 
@@ -100,12 +101,43 @@ same type name (the tutorial's @tt{TLeft}, one per step) replaces the earlier on
 (run-map m (ok-value (from-json qr #:lenient? #t)))
 ]
 
+@bold{A map as a value.} The StructureMap resource is the interchange form: @racket[fml->structuremap]
+emits it and @racket[structuremap->fml] reads one back into the AST the engine runs, so a map from a
+package or a data source runs without its FML. @racket[(structure-map ref)] turns a canonical, a
+parsed map or a StructureMap resource into a typed procedure, found the way @tt{fhir/operation}
+finds an OperationDefinition: maps registered in the process (a required @hash-lang[] @tt{fml}
+module registers its own), StructureMaps in @racket[current-data-source], then the packages.
+
+@racketblock[
+(require fml/registry)
+(define to-bp (structure-map "http://example.org/intake/StructureMap/IntakeToBP"))
+(smap-source to-bp)   (code:comment "'IntakeForm")
+(smap-target to-bp)   (code:comment "'Observation")
+(to-bp form)          (code:comment "FHIR JSON in, FHIR JSON out")
+((compose-maps a b) x) (code:comment "b after a, when a's target structure is b's source")
+]
+
+@tt{imports} resolve the same way: a group called by name is found in the map or any map it imports.
+@tt{$transform} takes @tt{source} (a canonical) and @tt{sourceMap} (a StructureMap) as well as
+@tt{srcMap}.
+
+@bold{Checking a map against its structures.} @tt{raco fml check} (and @racket[check-map]) reports
+what the two StructureDefinitions decide, positioned in the FML: an element the source or target
+type lacks, a value whose type cannot go into the element, a group call with the wrong arity or no
+such group, a required target element the entry group never assigns (a warning). With
+@litchar{--examples}, each example is transformed and the result validated against its base type and
+the @litchar{--profile}s; an issue is traced to the rule that wrote the element. Anything the
+structures do not decide is left alone. In a project of FSH structures the same check runs under
+@tt{raco fsh check} (the fsh package loads @tt{fml/project} on demand).
+
 @bold{Command line.}
 
 @verbatim{
-raco fml intake.fml                          the StructureMap JSON
+raco fml intake.fml                          the StructureMap JSON (a StructureMap .json is read wherever a .map is)
 raco fml intake.fml --transform form.json    run the map over an R5 resource; print the target
     [--structures <file|dir>]                the StructureDefinitions of the map's logical models
+raco fml check intake.fml [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...
+                                             the map against its structures; examples transformed and validated
 raco fml --parse-corpus <dir>                parse every .map under a directory, list the failures
 raco fml --tck                               the vendored corpora, with floors
 }
@@ -138,10 +170,10 @@ supported.
 @item{@bold{Transforms.} @tt{escape}, @tt{dateOp} and @tt{pointer} raise @tt{unsupported
 transform}. Target list modes other than @tt{share} are accepted and ignored (the tutorial's
 expected results agree).}
-@item{@bold{Declarations.} @tt{imports} is emitted but never loaded (a group an @tt{extends}
-names outside the map is skipped); @tt{let} constants, source types, cardinalities and
-@tt{default} are parsed and dropped; @tt{unmapped for} in a @tt{conceptmap} is parsed only. In
-embedded FHIRPath the @tt{as} operator is read as the target alias; use @tt{.as()}.}
+@item{@bold{Declarations.} @tt{imports} resolve by canonical (registered maps, the data source,
+the packages); one that resolves nowhere is skipped. @tt{let} constants, source types,
+cardinalities and @tt{default} are parsed and dropped; @tt{unmapped for} in a @tt{conceptmap} is
+parsed only. In embedded FHIRPath the @tt{as} operator is read as the target alias; use @tt{.as()}.}
 @item{@bold{Against the reference.} Every tutorial result the reference engine's own tests assert
 is reproduced. Two result files in the corpus are not among them: one for a map the reference never
 runs (its comment says @tt{isInteger()} is not a FHIRPath function), and one where the reference
@@ -178,6 +210,12 @@ invocation), @racket[fml-conceptmap] (name, prefixes, mappings); a transform is
 The StructureMap resource, the canonical compiled form of a mapping: status @racket["active"],
 unnamed rules named @tt{rule-N}, @tt{conceptmap} blocks as contained ConceptMaps.}
 
+@defproc[(structuremap->fml [sm hash?]) fml-map?]{
+The inverse: a StructureMap resource read into the AST (embedded FHIRPath parsed, typed literal
+parameters, R4 @tt{equivalence} as well as R5 @tt{relationship} in contained ConceptMaps). The
+round trip returns the parsed AST up to the FML-only surface (@tt{///} metadata, conceptmap
+prefixes) and the @tt{rule-N} names; every corpus map is checked.}
+
 @subsection[#:style 'unnumbered]{@tt{fml/transform}}
 @defmodule[fml/transform]
 
@@ -194,6 +232,48 @@ registered. Call it before reading a source instance of a logical model.}
 
 @defparam[current-fml-log log (-> string? any?)]{
 Where a rule's @tt{log(…)} goes; nowhere by default.}
+
+@defproc[(register-structure-map! [m fml-map?]) void?]{Resolvable by its url in this process.}
+@defproc[(resolve-structure-map [url string?]) (or/c fml-map? #f)]{
+Registered maps, then StructureMaps in @racket[current-data-source], then the packages; a
+@tt{|version} is ignored.}
+@defproc[(map-imports [m fml-map?]) (listof fml-map?)]{The map and its imports, transitively.}
+
+@subsection[#:style 'unnumbered]{@tt{fml/registry}}
+@defmodule[fml/registry]
+
+@defproc[(structure-map [ref (or/c string? fml-map? hash?)] [#:structures structures (or/c #f data-source? (listof hash?)) #f]) smap?]{
+A map as a typed procedure: by canonical (resolved as @racket[resolve-structure-map] does), a parsed
+map, or a StructureMap resource. @racket[structures] are the StructureDefinitions of its logical
+models. Applying it: @racket[(m src)], FHIR JSON or a typed node in, FHIR JSON out.}
+@defproc[(smap-source [m smap?]) (or/c symbol? #f)]{The entry group's source structure type.}
+@defproc[(smap-target [m smap?]) (or/c symbol? #f)]{Its target structure type.}
+@defproc[(smap-ast [m smap?]) fml-map?]{The AST.}
+@defproc[(compose-maps [a smap?] [b smap?]) smap?]{
+@racket[b] after @racket[a]; an error unless @racket[a]'s target structure is @racket[b]'s source.}
+
+@subsection[#:style 'unnumbered]{@tt{fml/check}}
+@defmodule[fml/check]
+
+@defproc[(check-map [m fml-map?] [#:source source (or/c string? path? #f) #f]) (listof diagnostic?)]{
+The static findings, each a @tt{fhir/diagnostic} at its rule, source or target.}
+@defproc[(check-map/examples [m fml-map?] [examples (listof hash?)]
+                             [#:profiles profiles (listof hash?) '()] [#:source source (or/c string? path? #f) #f])
+         (listof diagnostic?)]{
+Each example transformed and validated (fhir-validation, loaded on demand) against its base type and
+@racket[profiles]; an issue is positioned at the rule that wrote the element.}
+
+@subsection[#:style 'unnumbered]{@tt{fml/project}}
+@defmodule[fml/project]
+
+What a project of structures loads on demand (@tt{fsh/project}, @tt{fsh/check}):
+@defproc[(parse-map-file [file path-string?]) (values (or/c fml-map? #f) (listof diagnostic?))]
+@defproc[(map-structuremap [m fml-map?]) hash?]
+@defproc[(check-project-map [m fml-map?] [examples (listof hash?)] [profiles (listof hash?)]
+                            [#:source source (or/c string? path? #f) #f]) (listof diagnostic?)]{
+The static check, then the examples whose type is the map's source structure transformed and
+validated against the target structure (the profile among @racket[profiles] when the map targets
+one).}
 
 @subsection[#:style 'unnumbered]{@tt{fml/operations}}
 @defmodule[fml/operations]

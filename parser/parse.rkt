@@ -139,15 +139,16 @@
 (define (lower-target* t)
   (define rc (kid t 'rule-context))
   (define ctx-ids (if rc (map id-of (cdr rc)) '(#f)))
-  (define-values (variable share)
+  (define-values (variable share mode)
     (let ([a (kid t 'salias)] [lm (kid t 'target-list-mode)])
       (values (and a (id-of (cadr a)))
-              (and lm (equal? (cadr lm) "share") (id-of (caddr lm))))))
+              (and lm (equal? (cadr lm) "share") (id-of (caddr lm)))
+              (and lm (member (cadr lm) '("first" "last" "single")) (string->symbol (cadr lm))))))
   (fml-target (car ctx-ids)                              ; #f: a bare invocation target
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
               (let ([tr (kid t 'transform)] [fc (kid t 'function-call)])
                 (cond [tr (lower-transform tr)] [fc (lower-transform (list 'transform fc))] [else #f]))
-              variable share))
+              variable share mode))
 
 ;; a transform is a lowered FHIRPath — recognise the special shapes on the AST:
 ;; a bare string literal, a bare variable reference, or a named invocation (create/reference/…)

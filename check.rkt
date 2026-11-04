@@ -24,8 +24,9 @@
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          (only-in fhir/model/introspect full-field-specs)
          (only-in fhir/model/schema field-spec? fs-name fs-min fs-ftype ftype-type? ftype-type-name ftype-prim? ftype-prim-code
-                  ftype-raw? choice-group? choice-group-members)
-         (only-in fhir/model/registry type-registered? primitive-name?)
+                  ftype-raw?)
+         (only-in fhir/model/registry type-registered? primitive-name? type-schema-of)
+         (only-in fhir/model/schema type-schema-fields schema-field-name schema-field-choice-base)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value))
 
@@ -56,13 +57,13 @@
     [(not specs) (values #t #f)]                             ; a type we cannot describe: open
     [(findf (lambda (e) (and (field-spec? e) (eq? (fs-name e) sym))) specs)
      => (lambda (f) (values #t (ftype->ty (fs-ftype f))))]
-    [(for/or ([e (in-list specs)] #:when (choice-group? e))    ; `value` on a value[x]
-       (ormap (lambda (m) (string-prefix? (symbol->string m) name)) (choice-group-members e)))
-     (values #t #f)]
-    [(for/or ([e (in-list specs)] #:when (field-spec? e))      ; `valueString` written out
-       (and (regexp-match? #px"^[a-z]+[A-Z]" name) (eq? (fs-name e) sym)))
-     (values #t #f)]
+    [(choice-base? ty sym) (values #t #f)]                   ; `value` on a value[x]: its type is the value's
     [else (values #f #f)]))
+
+;; choice-base? : type-symbol name -> boolean   the schema's choice elements record their base
+(define (choice-base? ty sym)
+  (define sch (type-schema-of ty))
+  (and sch (for/or ([f (in-list (type-schema-fields sch))]) (eq? (schema-field-choice-base f) sym))))
 
 ;; path-type : type-symbol dotted-path -> (values missing-element|#f ty)
 (define (path-type ty path)
