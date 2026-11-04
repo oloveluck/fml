@@ -2,12 +2,14 @@
 
 ;;; base.rkt — the module language for #lang fml: a .map file is one FML mapping; the module
 ;;; provides the parsed AST, the compiled StructureMap (jsexpr), and `transform`: the map as a
-;;; one-argument procedure over a source resource (FHIR JSON, or a typed node), answering FHIR JSON —
-;;; so a map composes with the other FHIR languages' modules. Run the file to print the StructureMap.
+;;; procedure over a source resource (FHIR JSON, or a typed node), answering FHIR JSON — so a map
+;;; composes with the other FHIR languages' modules; `#:structures` gives the StructureDefinitions of the
+;;; map's logical models (a list of jsexprs, or a data source). Run the file to print the StructureMap.
 
 (require (for-syntax racket/base) json
          (only-in fml/structuremap fml->structuremap)
-         (only-in fml/transform run-map)
+         (only-in fml/transform run-map uses-types)
+         (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?))
@@ -32,6 +34,12 @@
      #'(#%module-begin
         (define fml form)
         (define structuremap (fml->structuremap fml))
-        (define (transform src) (run-map fml (as-node src)))
+        (define (transform src #:structures [structures #f])
+          (parameterize ([current-data-source
+                          (cond [(not structures) (current-data-source)]
+                                [(data-source? structures) structures]
+                                [else (resources->data-source structures)])])
+            (uses-types fml)                                 ; the logical models, before the source is read
+            (run-map fml (as-node src))))
         (provide fml structuremap transform)
         (module+ main (displayln (jsexpr->string structuremap))))]))

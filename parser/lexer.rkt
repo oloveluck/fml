@@ -63,6 +63,7 @@
 
    ;; keywords: the FML surface + FHIRPath's operator keywords (emitted as literal-string tokens)
    [(:or "map" "uses" "alias" "imports" "let" "group" "extends" "where" "check" "log" "then"
+         "conceptmap" "prefix"
          "share" "single" "types" "source" "queried" "target" "produced" "default"
          "first" "not_first" "last" "not_last" "only_one"
          "implies" "and" "or" "xor" "in" "contains" "is" "as" "div" "mod")

@@ -1,0 +1,20 @@
+matchbox mapping-language test resources (vendored)
+===================================================
+Vendored verbatim from:
+  repo:    https://github.com/ahdis/matchbox
+  path:    matchbox-engine/src/test/resources/mapping-language/
+  commit:  86633d0
+  fetched: 2026-11-04
+  license: Apache-2.0 (LICENSE alongside)
+
+Contents:
+  *.map, *.json       the maps the matchbox engine tests itself with, and the sources they run over
+                      (the pairing is in tests/matchbox-harness.rkt, `smoke-pairs`; the Java tests
+                      assert on single values, so these run without expected outputs here)
+  tutorial/stepN/     the FHIR mapping-language tutorial (hl7.org/fhir/mapping-tutorial.html):
+                      logical/   the step's StructureDefinitions (logical models TLeft/TRight)
+                      map/       the step's maps (.map; the .json is matchbox's StructureMap form)
+                      source/    TLeft instances
+                      result/    <map>.<source>.json — the expected TRight, or an OperationOutcome
+                                 when the run is expected to fail
+XML files are not vendored (JSON only, repo-wide).

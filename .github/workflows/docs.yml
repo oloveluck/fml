@@ -31,8 +31,19 @@ jobs:
             "$PWD" \
             "https://github.com/oloveluck/fhir.git?path=fhir" \
             "https://github.com/oloveluck/fhir.git?path=fhir-spec" \
+            "https://github.com/oloveluck/fhir.git?path=fhir-tx" \
             "https://github.com/oloveluck/fhirpath.git" \
+            "https://github.com/oloveluck/vcl.git" \
             "https://github.com/oloveluck/cql.git"
+      - name: Test the engine and the parser
+        run: raco test transform.rkt parser/parse.rkt structuremap.rkt tests/harness.rkt tests/matchbox-harness.rkt
+      - name: Run the mapping corpora (fhir-test-cases, matchbox, the FML tutorial)
+        run: raco fml --tck
+      - name: Parse the FHIR inter-version maps (informational; not vendored, no license)
+        continue-on-error: true
+        run: |
+          git clone -q --depth 1 https://github.com/FHIR/interversion /tmp/interversion
+          raco fml --parse-corpus /tmp/interversion/r4
       - name: Build the documentation
         run: |
           raco scribble +m --html --dest site --dest-name index.html --redirect-main https://docs.racket-lang.org/ scribblings/fml.scrbl

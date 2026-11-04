@@ -53,7 +53,20 @@
   (fml-map url name metadata
            (map lower-structure (kids d 'structure))
            (for/list ([i (in-list (kids d 'imports))]) (cadr (kid i 'url)))
-           (map lower-group (kids d 'fgroup))))
+           (map lower-group (kids d 'fgroup))
+           (map lower-conceptmap (kids d 'conceptmap))))
+
+;; an embedded concept map: its prefixes resolve the systems of each mapping
+(define (lower-conceptmap c)
+  (define prefixes
+    (for/hash ([p (in-list (kids c 'cm-prefix))]) (values (id-of (cadr p)) (caddr p))))
+  (define (code-of cc) (let ([x (cadr cc)]) (if (string? x) x (id-of x))))
+  (define (system-of id) (hash-ref prefixes (id-of id) (id-of id)))
+  (fml-conceptmap (cadr c) prefixes
+                  (for/list ([m (in-list (kids c 'cm-mapping))])
+                    (match (cdr m)
+                      [(list s sc op t tc)
+                       (vector (system-of s) (code-of sc) (apply string-append (cdr op)) (system-of t) (code-of tc))]))))
 (define (assoc-ref al k) (cond [(assoc k al) => cdr] [else #f]))
 
 (define (lower-structure s)

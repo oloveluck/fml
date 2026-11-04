@@ -25,7 +25,26 @@
                                                    'mode (symbol->string (fml-use-mode u))
                                                    'alias (fml-use-alias u))))))
            'import (let ([is (fml-map-imports m)]) (and (pair? is) is))
+           'contained (let ([cms (fml-map-conceptmaps m)])
+                        (and (pair? cms) (map conceptmap->jsexpr cms)))
            'group (for/list ([g (in-list (fml-map-groups m))]) (group->jsexpr g)))))
+
+;; an embedded concept map as a contained ConceptMap (url #name), one group per system pair
+(define (conceptmap->jsexpr cm)
+  (define by-pair
+    (for/fold ([h (hash)]) ([m (in-list (fml-conceptmap-mappings cm))])
+      (hash-update h (cons (vector-ref m 0) (vector-ref m 3)) (lambda (l) (append l (list m))) '())))
+  (hasheq 'resourceType "ConceptMap" 'id (fml-conceptmap-name cm) 'url (string-append "#" (fml-conceptmap-name cm))
+          'status "active"
+          'group (for/list ([(pair ms) (in-hash by-pair)])
+                   (hasheq 'source (car pair) 'target (cdr pair)
+                           'element (for/list ([m (in-list ms)])
+                                      (hasheq 'code (vector-ref m 1)
+                                              'target (list (hasheq 'code (vector-ref m 4)
+                                                                    'relationship (relationship-of (vector-ref m 2))))))))))
+(define (relationship-of op)
+  (case op [("==" "=") "equivalent"] [("-" "~") "related-to"] [("<=" "<") "source-is-narrower-than-target"]
+           [(">=" ">") "source-is-broader-than-target"] [("!=") "not-related-to"] [else "related-to"]))
 
 (define (group->jsexpr g)
   (drop-false

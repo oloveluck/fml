@@ -9,7 +9,15 @@
 ;; only parenthesized) expression, `share` carries a listRuleId, and a rule name may be a
 ;; double-quoted string.
 
-fml-doc         : metadata* map-decl? structure* imports* const* fgroup+
+fml-doc         : metadata* map-decl? conceptmap* structure* imports* const* fgroup+
+
+;; the R4 mapping language's embedded concept map (dropped from the R5 g4, still written and run by
+;; the reference implementation): prefixes name code systems, mappings pair codes
+conceptmap      : /"conceptmap" (DELIM | STRING) /"{" cm-prefix* cm-mapping* /"}"
+cm-prefix       : /"prefix" identifier /"=" (DELIM | STRING)
+cm-mapping      : identifier /":" cm-code cm-op identifier /":" cm-code
+cm-code         : identifier | DELIM | STRING
+cm-op           : "=" "=" | "=" | "!=" | "<=" | ">=" | "-" | "~" | "<" | ">" 
 
 metadata        : METADATA
 map-decl        : /"map" url /"=" (DELIM | identifier)
@@ -94,6 +102,7 @@ external-constant   : EXTERNAL
 identifier          : IDENTIFIER | "as" | "is" | "in" | "contains" | "where" | "check" | "log"
                     | "first" | "last" | "single" | "share" | "default" | "div" | "mod"
                     | "source" | "target" | "map" | "uses" | "alias" | "let" | "group" | "extends"
+                    | "conceptmap" | "prefix"
 
 ;; the FML dialect also admits "double-quoted" strings inside expressions (qr2cda-eval's iif)
 literal             : quantity | STRING | DELIM | BOOL | DATE | DATETIME | TIME | "{" "}"
