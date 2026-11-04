@@ -26,7 +26,21 @@
          (only-in fhir/result/result ok? ok-value err-error))
 
 ;; A Tally is (tally passed total failures) — failures: (listof (list name reason))
+;; An Outcome is 'pass | 'skip (not counted) | a string saying why the case failed
 (struct tally (passed total failures) #:transparent)
+(define empty-tally (tally 0 0 '()))
+(define (tally-add t name outcome [weight 1])
+  (case outcome
+    [(skip) t]
+    [(pass) (tally (+ (tally-passed t) weight) (+ (tally-total t) weight) (tally-failures t))]
+    [else (tally (tally-passed t) (+ (tally-total t) weight) (append (tally-failures t) (list (list name outcome))))]))
+;; run-cases : cases (case -> name) (case -> Outcome) -> tally   every case, an exception its reason
+(define (run-cases cases name-of outcome-of)
+  (for/fold ([t empty-tally]) ([c (in-list cases)])
+    (tally-add t (name-of c)
+               (with-handlers ([exn:fail? (lambda (e) (format "error: ~a" (exn-message e)))]) (outcome-of c)))))
+;; the corpus-relative name of a map file
+(define ((relative-to dir) f) (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
 
 (provide (contract-out
           [struct tally ([passed exact-nonnegative-integer?] [total exact-nonnegative-integer?]
@@ -63,22 +77,12 @@
         string<? #:key path->string))
 
 (define (parse-corpus dir)
-  (for/fold ([t (tally 0 0 '())]) ([f (in-list (map-files dir))])
-    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
-    (define r (with-handlers ([exn:fail? (lambda (e) (format "error: ~a" (exn-message e)))])
-                (parse-fml (file->string f))))
-    (cond [(and (not (string? r)) (ok? r)) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
-          [else (tally (tally-passed t) (add1 (tally-total t))
-                       (append (tally-failures t) (list (list name (if (string? r) r (format "parse: ~a" (err-error r)))))))])))
+  (run-cases (map-files dir) (relative-to dir)
+             (lambda (f) (let ([r (parse-fml (file->string f))]) (if (ok? r) 'pass (format "parse: ~a" (err-error r)))))))
 
 ;; ---- tutorial ---------------------------------------------------------------
 (define (read-json-file f) (call-with-input-file f read-json))
 
-;; run-one : map-file source-file -> jsexpr | (list 'error message)   inside the step's data source
-(define (run-one map-file source-file)
-  (with-handlers ([exn:fail? (lambda (e) (list 'error (exn-message e)))])
-    (define-values (m _) (map-from-file map-file '()))
-    (run-loaded m source-file)))
 (define (run-loaded m source-file)
   (uses-types m)                                   ; registers the step's logical models
   (define sr (from-json (read-json-file source-file) #:lenient? #t))
@@ -91,37 +95,33 @@
                [conceptmaps (for/list ([c (fml-map-conceptmaps m)]) (struct-copy fml-conceptmap c [prefixes (hash)]))]))
 
 (define (roundtrip-corpus dir)
-  (for/fold ([t (tally 0 0 '())]) ([f (in-list (map-files dir))])
-    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
-    (define outcome
-      (with-handlers ([exn:fail? (lambda (e) (format "error: ~a" (exn-message e)))])
-        (define r (parse-fml (file->string f)))
-        (cond [(not (ok? r)) 'skip]                                   ; parse failures are counted elsewhere
-              [else (define m (ok-value r))
-                    (define back (structuremap->fml (fml->structuremap m)))
-                    (if (equal? back (ast-key m)) 'pass (format "read back differs from the parsed map"))])))
-    (case outcome
-      [(skip) t]
-      [(pass) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
-      [else (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome))))])))
+  (run-cases (map-files dir) (relative-to dir)
+             (lambda (f)
+               (define r (parse-fml (file->string f)))
+               (cond [(not (ok? r)) 'skip]                                   ; parse failures are counted elsewhere
+                     [(equal? (structuremap->fml (fml->structuremap (ok-value r))) (ast-key (ok-value r))) 'pass]
+                     [else "read back differs from the parsed map"]))))
+
+;; the logical models beside a tutorial map (map/x.map -> ../logical/*.json), none elsewhere
+(define (logical-models-beside f)
+  (define d (build-path (path-only f) 'up "logical"))
+  (if (directory-exists? d)
+      (for/list ([g (directory-list d #:build? #t)] #:when (regexp-match? #px"\\.json$" (path->string g))) (read-json-file g))
+      '()))
 
 (define (check-corpus dir)
-  (for/fold ([t (tally 0 0 '())]) ([f (in-list (map-files dir))])
-    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
-    (define logical (let ([d (build-path (path-only f) 'up "logical")]) (and (directory-exists? d) d)))
-    (define sds (if logical
-                    (for/list ([g (directory-list logical #:build? #t)] #:when (regexp-match? #px"\\.json$" (path->string g))) (read-json-file g))
-                    '()))
-    (define r (parse-fml (file->string f) #:source name))
-    (cond
-      [(not (ok? r)) t]
-      [else
-       (define ds (with-handlers ([exn:fail? (lambda (e) (list (format "error: ~a" (exn-message e))))])
-                    (parameterize ([current-data-source (resources->data-source sds)])
-                      (map diagnostic->string (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (check-map (ok-value r) #:source name))))))
-       (if (null? ds)
-           (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))
-           (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name (string-join ds "\n    "))))))])))
+  (run-cases (map-files dir) (relative-to dir)
+             (lambda (f)
+               (define name ((relative-to dir) f))
+               (define r (parse-fml (file->string f) #:source name))
+               (cond
+                 [(not (ok? r)) 'skip]
+                 [else
+                  (define errors
+                    (parameterize ([current-data-source (resources->data-source (logical-models-beside f))])
+                      (for/list ([d (in-list (check-map (ok-value r) #:source name))] #:when (eq? (diagnostic-severity d) 'error))
+                        (diagnostic->string d))))
+                  (if (null? errors) 'pass (string-join errors "\n    "))]))))
 
 ;; the reference's StructureMap (matchbox, R4-flavoured) and ours, comparable: ids/metadata and
 ;; R4-only fields dropped, unnamed rules unnamed on both sides, FHIRPath text re-printed
@@ -150,22 +150,20 @@
   (define pairs (for/list ([f (in-list (map-files (build-path dir "tutorial")))]
                            #:when (file-exists? (path-replace-extension f #".json")))
                   f))
-  (for/fold ([t (tally 0 0 '())]) ([f (in-list pairs)])
-    (define name (path->string (find-relative-path (simple-form-path dir) (simple-form-path f))))
-    (define r (parse-fml (file->string f)))
-    (cond
-      [(not (ok? r)) t]
-      [else
-       (define ours (normalise-sm (fml->structuremap (ok-value r))))
-       (define theirs (normalise-sm (read-json-file (path-replace-extension f #".json"))))
-       (define (rules sm) (append-map (lambda (g) (hash-ref g 'rule '())) (hash-ref sm 'group '())))
-       (define ok (for/sum ([a (in-list (rules ours))] [b (in-list (rules theirs))]) (if (jsexpr=? a b) 1 0)))
-       (define total (max (length (rules ours)) (length (rules theirs))))
-       (tally (+ (tally-passed t) ok) (+ (tally-total t) total)
-              (if (= ok total) (tally-failures t)
-                  (append (tally-failures t)
-                          (for/list ([a (in-list (rules ours))] [b (in-list (rules theirs))] #:unless (jsexpr=? a b))
-                            (list name (format "rule ~a differs\n    ours   ~v\n    theirs ~v" (hash-ref a 'name "?") a b))))))])))
+  ;; a case per RULE: ours against theirs, in order (a rule one side lacks counts as a failure)
+  (define (rules sm) (append-map (lambda (g) (hash-ref g 'rule '())) (hash-ref sm 'group '())))
+  (define cases
+    (for*/list ([f (in-list pairs)]
+                [r (in-value (parse-fml (file->string f)))] #:when (ok? r)
+                [ours (in-value (rules (normalise-sm (fml->structuremap (ok-value r)))))]
+                [theirs (in-value (rules (normalise-sm (read-json-file (path-replace-extension f #".json")))))]
+                [i (in-range (max (length ours) (length theirs)))])
+      (list ((relative-to dir) f) (and (< i (length ours)) (list-ref ours i)) (and (< i (length theirs)) (list-ref theirs i)))))
+  (run-cases cases car
+             (lambda (c)
+               (define a (cadr c)) (define b (caddr c))
+               (if (and a b (jsexpr=? a b)) 'pass
+                   (format "rule differs\n    ours   ~v\n    theirs ~v" a b)))))
 
 (define (expected-error? j) (and (hash? j) (equal? (hash-ref j 'resourceType #f) "OperationOutcome")))
 
@@ -209,45 +207,45 @@
   (unless m (error 'structuremap "~a: not resolved by canonical" map-file))
   (values m (list sm)))
 
-(define (run-tutorial-with dir load-map)
+;; A TutorialCase is (tcase name step map-file source-file expected): one result file of one step,
+;; with the step's logical models beside it
+(struct tcase (name step map-file source-file expected) #:transparent)
+(define (tutorial-cases dir)
   (define steps (sort (for/list ([d (directory-list (build-path dir "tutorial") #:build? #t)]
                                  #:when (directory-exists? (build-path d "result")))
                         d)
                       < #:key (lambda (d) (string->number (regexp-replace #rx"^step" (path->string (file-name-from-path d)) "")))))
-  (for*/fold ([t (tally 0 0 '())])
-             ([step (in-list steps)]
+  (for*/list ([step (in-list steps)]
               [result (in-list (sort (directory-list (build-path step "result")) string<? #:key path->string))])
-    (define step-name (path->string (file-name-from-path step)))
-    (define sds (for/list ([f (directory-list (build-path step "logical") #:build? #t)]
-                           #:when (regexp-match? #px"\\.json$" (path->string f)))
-                  (read-json-file f)))
     (define parts (regexp-match #px"^(.*)\\.(.*)\\.json$" (path->string result)))
-    (define map-file (build-path step "map" (string-append (cadr parts) ".map")))
-    (define source-file (build-path step "source" (string-append (caddr parts) ".json")))
-    (define name (format "~a/~a" step-name (path->string result)))
-    (define expected (let ([j (read-json-file (build-path step "result" result))])
-                       (if (eq? (override-of name) 'error)
-                           (hasheq 'resourceType "OperationOutcome" 'issue (list (hasheq 'diagnostics (caddr (assoc name reference-overrides)))))
-                           j)))
-    (define actual (if (eq? (override-of name) 'skip)
-                       'skipped
-                       (with-handlers ([exn:fail? (lambda (e) (list 'error (exn-message e)))])
-                         (define-values (m extra) (load-map map-file sds))
-                         (parameterize ([current-data-source (resources->data-source (append extra sds))])
-                           (run-loaded m source-file)))))
-    (define outcome
-      (cond [(eq? actual 'skipped) 'skipped]
-            [(expected-error? expected)
-             (if (and (pair? actual) (eq? (car actual) 'error)) 'pass
-                 (format "expected an error (~a), got ~v"
-                         (hash-ref (car (hash-ref expected 'issue)) 'diagnostics "") actual))]
-            [(and (pair? actual) (eq? (car actual) 'error)) (cadr actual)]
-            [(jsexpr=? actual expected) 'pass]
-            [else (format "mismatch\n    expected ~v\n    actual   ~v" expected actual)]))
-    (case outcome
-      [(skipped) t]
-      [(pass) (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t))]
-      [else (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list name outcome))))])))
+    (define name (format "~a/~a" (path->string (file-name-from-path step)) (path->string result)))
+    (tcase name step
+           (build-path step "map" (string-append (cadr parts) ".map"))
+           (build-path step "source" (string-append (caddr parts) ".json"))
+           ;; the reference's expectation: the result file, unless its own test expects an error
+           (if (eq? (override-of name) 'error)
+               (hasheq 'resourceType "OperationOutcome" 'issue (list (hasheq 'diagnostics (caddr (assoc name reference-overrides)))))
+               (read-json-file (build-path step "result" result))))))
+
+;; the outcome of one case: the map (loaded as `load-map` says) run over the source, against what the
+;; reference expects — a result, or an error
+(define (run-tutorial-with dir load-map)
+  (run-cases (tutorial-cases dir) tcase-name
+             (lambda (c)
+               (define sds (logical-models-beside (tcase-map-file c)))
+               (define expected (tcase-expected c))
+               (define actual
+                 (with-handlers ([exn:fail? (lambda (e) (list 'error (exn-message e)))])
+                   (define-values (m extra) (load-map (tcase-map-file c) sds))
+                   (parameterize ([current-data-source (resources->data-source (append extra sds))])
+                     (run-loaded m (tcase-source-file c)))))
+               (define failed? (and (pair? actual) (eq? (car actual) 'error)))
+               (cond [(eq? (override-of (tcase-name c)) 'skip) 'skip]
+                     [(expected-error? expected)
+                      (if failed? 'pass (format "expected an error (~a), got ~v" (hash-ref (car (hash-ref expected 'issue)) 'diagnostics "") actual))]
+                     [failed? (cadr actual)]
+                     [(jsexpr=? actual expected) 'pass]
+                     [else (format "mismatch\n    expected ~v\n    actual   ~v" expected actual)]))))
 
 (define (jsexpr=? a b)
   (cond [(and (hash? a) (hash? b))
@@ -279,12 +277,12 @@
     ("whereclause.map" "capabilitystatement-example.json")))
 
 (define (run-smoke dir)
-  (for/fold ([t (tally 0 0 '())]) ([p (in-list smoke-pairs)])
-    (define actual (parameterize ([current-data-source (resources->data-source '())])
-                     (run-one (build-path dir (car p)) (build-path dir (cadr p)))))
-    (if (and (pair? actual) (eq? (car actual) 'error))
-        (tally (tally-passed t) (add1 (tally-total t)) (append (tally-failures t) (list (list (car p) (cadr actual)))))
-        (tally (add1 (tally-passed t)) (add1 (tally-total t)) (tally-failures t)))))
+  (run-cases smoke-pairs car
+             (lambda (p)
+               (parameterize ([current-data-source (resources->data-source '())])
+                 (define-values (m _) (map-from-file (build-path dir (car p)) '()))
+                 (run-loaded m (build-path dir (cadr p)))
+                 'pass))))
 
 (module+ test
   (require rackunit racket/runtime-path)
