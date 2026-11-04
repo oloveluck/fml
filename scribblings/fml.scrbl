@@ -57,6 +57,105 @@ element on either side (@tt{ans.value}, @tt{tgt.effective}) reads whichever vari
 writes the variant of the value's type. A repeating target appends; @tt{share v} reuses one target
 element across rules.
 
+@section{A mapping problem, solved}
+
+The problem: a clinic's front desk records blood-pressure readings on an intake form of its own
+design, and the clinic's record keeps them as Observations that must conform to its screening
+profile. Three things, one project (@tt{fhir-examples/examples/intake-maps}): the two structures
+in FSH, the map between them in FML, and an example form.
+
+@bold{1. The structures.} The form is a logical model, not a FHIR resource; the record is a
+profile of Observation.
+
+@verbatim|{Logical: IntakeForm
+Id: IntakeForm
+* patientId 1..1 string "The patient's record id"
+* measured 1..1 dateTime "When the reading was taken"
+* systolic 1..1 integer "Systolic pressure, mm[Hg]"
+* diastolic 1..1 integer "Diastolic pressure, mm[Hg]"
+
+Profile: ScreeningBP
+Parent: Observation
+* status = #final
+* code = http://loinc.org#85354-9
+* subject 1..1
+* effective[x] 1..1
+* effective[x] only dateTime
+* component 2..*
+
+Instance: intake-1
+InstanceOf: IntakeForm
+* patientId = "p1"
+* measured = "2024-03-01T09:00:00Z"
+* systolic = 120
+* diastolic = 80}|
+
+@bold{2. The map.} Its @tt{uses} name the two structures by canonical; the engine resolves the
+logical model from the project and the profile's base type from the tower. Each rule reads one
+form element and writes the Observation element it feeds.
+
+@verbatim|{/// url = 'http://example.org/intake/StructureMap/IntakeToBP'
+/// name = 'IntakeToBP'
+uses "http://example.org/intake/StructureDefinition/IntakeForm" alias Intake as source
+uses "http://example.org/intake/StructureDefinition/ScreeningBP" alias BP as target
+
+group IntakeToBP(source src : Intake, target tgt : BP) {
+  src -> tgt.status = 'final', tgt.code = cc('http://loinc.org', '85354-9', 'Blood pressure panel') "panel";
+  src.patientId as id -> tgt.subject as s, s.reference = append('Patient/', id) "subject";
+  src.measured as m -> tgt.effective = m "when";
+  src.systolic as v -> tgt.component as c, c.code = cc('http://loinc.org', '8480-6', 'Systolic blood pressure'),
+                       c.value = qty(v, 'mm[Hg]', 'http://unitsofmeasure.org', 'mm[Hg]') "systolic";
+  src.diastolic as v -> tgt.component as c, c.code = cc('http://loinc.org', '8462-4', 'Diastolic blood pressure'),
+                        c.value = qty(v, 'mm[Hg]', 'http://unitsofmeasure.org', 'mm[Hg]') "diastolic";
+}}|
+
+@bold{3. Check before running.} @tt{raco fsh check examples/intake-maps} compiles the structures,
+checks the map against them and transforms the example form, validating the result against the
+profile. A mistake is reported on its line, as the FSH checker reports an instance rule. Misspell
+an element, assign a string where a Quantity goes, or forget a rule for @tt{code}, and the check
+says so before any data moves:
+
+@verbatim|{IntakeToBP.map:11:3: fml check error: `systolc` is not an element of IntakeForm
+  src.systolc as v -> tgt.component as c, c.code = cc(...)
+  ^
+IntakeToBP.map:7:1: fml check warning: Observation.code is required (min 1) but no rule of IntakeToBP assigns it}|
+
+Without a project, the same check is @tt{raco fml check IntakeToBP.map --structures sds/
+--examples forms/ --profile ScreeningBP.json}.
+
+@bold{4. Run it.} From the command line, @tt{raco fml IntakeToBP.map --transform intake-1.json
+--structures sds/} prints the Observation:
+
+@verbatim|{{"resourceType": "Observation", "status": "final",
+ "code": {"coding": [{"system": "http://loinc.org", "code": "85354-9", "display": "Blood pressure panel"}]},
+ "subject": {"reference": "Patient/p1"},
+ "effectiveDateTime": "2024-03-01T09:00:00Z",
+ "component": [{"code": {"coding": [{"system": "http://loinc.org", "code": "8480-6", "display": "Systolic blood pressure"}]},
+                "valueQuantity": {"value": 120, "unit": "mm[Hg]", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}},
+               {"code": {"coding": [{"system": "http://loinc.org", "code": "8462-4", "display": "Diastolic blood pressure"}]},
+                "valueQuantity": {"value": 80, "unit": "mm[Hg]", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}}]}}|
+
+The integers stayed integers inside the quantities, @tt{measured} landed on @tt{effectiveDateTime}
+because the value is a dateTime, and each @tt{component} rule appended an entry.
+
+@bold{5. As a value in a program.} Packed (@tt{raco fsh examples/intake-maps --pack intake.tgz}),
+the project is a package holding both structures and the map, and the map is a typed procedure
+resolved by its canonical:
+
+@racketblock[
+(require fml/registry fhir/sd/sd-index fhir/conformance/validate)
+(parameterize ([current-sd-packages (list "intake.tgz" core)])
+  (define to-bp (structure-map "http://example.org/intake/StructureMap/IntakeToBP"))
+  (smap-source to-bp)                          (code:comment "'IntakeForm")
+  (smap-target to-bp)                          (code:comment "'Observation")
+  (define obs (to-bp form))                    (code:comment "the form above, as JSON")
+  (validate-issues obs #:profiles (list screening-bp)))  (code:comment "'()")
+]
+
+Over HTTP, a server generated from that package serves the same map as
+@tt{StructureMap/$transform} with @tt{source} naming the canonical. The test that does all of this
+is @tt{fhir-examples/tests/intake-maps-test.rkt}.
+
 @section{Using it}
 
 @bold{As a module.} @racket[(require "intake.fml")] gives @racket[fml] (the AST),
