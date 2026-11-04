@@ -159,6 +159,7 @@
      (match ast
        [(fp-lit* v) #:when (string? v) (fml-literal v)]
        [(fp-inv* #f name) (fml-var (symbol->string name))]
+       [(fp-callv #f 'copy (list (fp-inv* #f name))) (fml-var (symbol->string name))]   ; copy(v) = v
        [(fp-callv #f name args) (fml-invoke (symbol->string name) (map invoke-arg args))]
        [_ (fml-fhirpath ast)])]))
 

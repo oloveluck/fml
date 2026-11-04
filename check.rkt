@@ -24,7 +24,7 @@
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          (only-in fhir/model/introspect full-field-specs)
          (only-in fhir/model/schema field-spec? fs-name fs-min fs-ftype ftype-type? ftype-type-name ftype-prim? ftype-prim-code
-                  choice-group? choice-group-members)
+                  ftype-raw? choice-group? choice-group-members)
          (only-in fhir/model/registry type-registered? primitive-name?)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value))
@@ -44,6 +44,7 @@
 (define (ty->string ty) (cond [(prim? ty) (prim-code ty)] [(symbol? ty) (symbol->string ty)] [else "?"]))
 (define (ftype->ty ft)
   (cond [(ftype-prim? ft) (prim (ftype-prim-code ft))]
+        [(ftype-raw? ft) (prim "string")]                       ; an untyped string leaf (`id`)
         [(and (ftype-type? ft) (type-registered? (ftype-type-name ft))) (ftype-type-name ft)]
         [else #f]))
 
@@ -267,7 +268,7 @@
     "group entry(source src : QR, target tgt : Observation) {\n"
     "  src.itme as item -> tgt.status = 'final';\n"                   ; 5: no element itme
     "  src.item as item -> tgt.valeu = 'x';\n"                        ; 6: no element valeu
-    "  src.subject as s -> tgt.code = 'text';\n"                      ; 7: a string into a CodeableConcept
+    "  src.subject as s -> tgt.category = 'text';\n"                  ; 7: a string into a CodeableConcept
     "  src.subject as s -> tgt.id = s;\n"                             ; 8: a Reference into an id
     "  src.item as item -> tgt.component as c then nosuch(item, c);\n" ; 9: no group
     "  src.item as item -> tgt.component as c then comp(item);\n"      ; 10: arity
@@ -277,7 +278,7 @@
   (check-equal? (for/list ([d ds]) (loc-line (diagnostic-loc d))) '(5 6 7 8 9 10 4))
   (check-true (regexp-match? #rx"`itme` is not an element of QuestionnaireResponse" (diagnostic-message (car ds))))
   (check-true (regexp-match? #rx"`valeu` is not an element of Observation" (diagnostic-message (cadr ds))))
-  (check-true (regexp-match? #rx"string cannot be assigned to code, a CodeableConcept" (diagnostic-message (caddr ds))))
+  (check-true (regexp-match? #rx"string cannot be assigned to category, a CodeableConcept" (diagnostic-message (caddr ds))))
   (check-true (regexp-match? #rx"s is a Reference; it cannot be assigned to id" (diagnostic-message (list-ref ds 3))))
   (check-true (regexp-match? #rx"no group nosuch" (diagnostic-message (list-ref ds 4))))
   (check-true (regexp-match? #rx"takes 2 parameters, called with 1" (diagnostic-message (list-ref ds 5))))
