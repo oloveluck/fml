@@ -21,7 +21,7 @@
 (require racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
          (only-in "transform.rkt" uses-types map-imports run-map)
-         (only-in fhir/diagnostic diagnostic attached-loc loc)
+         (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          (only-in fhir/model/introspect full-field-specs)
          (only-in fhir/model/schema field-spec? fs-name fs-min fs-ftype ftype-type? ftype-type-name ftype-prim? ftype-prim-code
                   choice-group? choice-group-members)
