@@ -321,8 +321,10 @@ prefixes) and the @tt{rule-N} names; every corpus map is checked.}
 @defproc[(run-map [m fml-map?] [source fhir?]) hash?]{
 Runs the map's first group over a typed source node and returns the target resource as a jsexpr.
 Targets are shaped by the registered type schema (a repeating element appends, a @tt{value[x]} takes
-the key of the value's type, a primitive element coerces what is assigned to it). Errors name the
-rule.}
+the key of the value's type, a primitive element coerces what is assigned to it). A failure while
+running a rule (a @tt{check} that does not hold, @tt{only_one} over several elements, a @tt{cast}
+that cannot convert, an unknown group) raises @tt{exn:fail:diagnostic} positioned at the rule, as a
+parse error is.}
 
 @defproc[(uses-types [m fml-map?]) hash?]{
 The map's @tt{uses} resolved to type symbols, keyed by alias and type name; a structure the towers
@@ -380,5 +382,7 @@ one).}
 @defthing[$transform procedure?]{
 @tt{StructureMap/$transform} as a @tt{fhir/operation} value, registered when the module loads: the
 subject is the content, @tt{#:srcMap} the FML text. The content is read leniently into the R5
-tower. A StructureMap given only as @tt{source} or @tt{sourceMap} JSON is refused with an
-OperationOutcome saying so.}
+tower; @tt{sourceMap} is a StructureMap resource and @tt{source} a canonical (registered maps, the
+data source, the registry, the packages). A rule that fails at run time comes back as an
+OperationOutcome whose issue carries the rule's file and line (the standard
+@tt{operationoutcome-issue-line} extensions).}

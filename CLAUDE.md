@@ -100,3 +100,7 @@ element (`target-paths`/`trace-target`). The corpora check clean but for three R
 `contributor` and `Composition.code` are R4 elements R5 dropped, `identifer` is a typo in syntax.map.
 `project.rkt` is what fsh loads on demand (`parse-map-file`, `map-structuremap`, `check-project-map`)
 so a project of FSH structures holds its maps; the worked project is fhir-examples/examples/intake-maps.
+A `#lang fml` module registers its StructureMap with `fhir/registry` (the module system as the FHIR
+registry), and `resolve-structure-map` looks there after the data source; a rule that fails at run time
+(`rule-error`: check, only_one, cast, an unknown group, an unbound variable) raises `exn:fail:diagnostic`
+positioned at the rule, which `$transform` returns as an OperationOutcome carrying the line.
