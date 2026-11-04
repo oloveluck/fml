@@ -15,7 +15,7 @@
          (only-in fhirpath/print fhirpath->string)
          (only-in fhirpath/parser/parse parse-fhirpath)
          (only-in fhirpath/parser/ast fp-lit fp-lit? fp-lit-value)
-         (only-in fhir/serialize/jsexpr-util drop-false))
+         (only-in fhir/serialize/jsexpr-util drop-false jref jlist))
 
 (provide (contract-out [fml->structuremap (-> fml-map? hash?)]
                        [structuremap->fml (-> hash? fml-map?)]))
@@ -136,8 +136,6 @@
         [else (hasheq 'valueId a)]))
 
 ;; ---- StructureMap -> AST ------------------------------------------------------
-(define (jref h k [d #f]) (if (hash? h) (hash-ref h k d) d))
-(define (jlist h k) (let ([v (jref h k '())]) (if (list? v) v '())))
 (define (fp-of s) (and (string? s) (fml-fhirpath (parse-fhirpath s))))
 
 (define (structuremap->fml sm)
