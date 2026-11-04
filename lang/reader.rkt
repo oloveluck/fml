@@ -9,7 +9,7 @@ fml/base
 (require (only-in fml/parser/parse parse-fml)
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in racket/port port->string)
-         (only-in cql/error cql-error-diagnostic)
+         (only-in fml/error fml-error-diagnostic)
          (only-in fhir/diagnostic raise-diagnostic))
 
 (define (source-name src) (cond [(path? src) (path->string src)] [(string? src) src] [else #f]))
@@ -17,7 +17,7 @@ fml/base
   (define r (parse-fml (port->string in) #:source (source-name src)))
   (if (ok? r)
       (list (datum->syntax #f (list 'fml-map-form (ok-value r))))
-      (let ([d (cql-error-diagnostic (err-error r))])
+      (let ([d (fml-error-diagnostic (err-error r))])
         (if d (raise-diagnostic d) (error 'fml (format "~a" (err-error r)))))))
 
 (define (fml-read in) (map syntax->datum (fml-read-syntax #f in)))

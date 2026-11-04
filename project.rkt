@@ -19,7 +19,7 @@
          (only-in fhir/sd/logical resolve-structure-definition/data)
          (only-in fhir/diagnostic diagnostic diagnostic? loc)
          (only-in fhir/result/result ok? ok-value err-error)
-         (only-in cql/error cql-error-diagnostic cql-error-message))
+         (only-in "error.rkt" fml-error-diagnostic fml-error-message))
 
 (provide (contract-out
           [parse-map-file (-> path-string? (values (or/c fml-map? #f) (listof diagnostic?)))]
@@ -31,8 +31,8 @@
   (define r (parse-fml src #:source file))
   (cond [(ok? r) (values (ok-value r) '())]
         [else (define e (err-error r))
-              (values #f (list (or (cql-error-diagnostic e)
-                                   (diagnostic 'fml 'parse 'error (cql-error-message e)
+              (values #f (list (or (fml-error-diagnostic e)
+                                   (diagnostic 'fml 'parse 'error (fml-error-message e)
                                                (loc (if (path? file) (path->string file) file) #f #f #f #f)))))]))
 
 (define (map-structuremap m) (fml->structuremap m))

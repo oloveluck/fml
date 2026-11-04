@@ -18,7 +18,7 @@ raco pkg install fml          # once published on pkgs.racket-lang.org
 raco pkg install --link --auto ../fhir/fhir .
 ```
 
-Depends on `fhir`, `fhir-tx` (`translate` over the terminology service), `fhirpath`, `cql` (for its error struct only — being removed).
+Depends on `fhir`, `fhir-tx` (`translate` over the terminology service) and `fhirpath`.
 
 ## Use
 

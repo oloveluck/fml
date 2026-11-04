@@ -13,14 +13,14 @@ FHIR mapping-language tutorial (37/37 of the results its reference asserts), and
 inter-version maps (332/332 parse).
 
 Part of the @hyperlink["https://github.com/oloveluck/fhir"]{fhir} family; depends on @tt{fhir},
-@tt{fhir-tx} (@tt{translate} over the terminology service), @tt{fhirpath} and (for its error struct only) @tt{cql}.
+@tt{fhir-tx} (@tt{translate} over the terminology service) and @tt{fhirpath}.
 
 @table-of-contents[]
 
 @section{Install}
 
 @verbatim{
-raco pkg install --link --auto fhir/fhir fhirpath cql fml
+raco pkg install --link --auto fhir/fhir fhirpath vcl fhir/fhir-tx fml
     # from source, with the repos alongside
 }
 
@@ -294,7 +294,7 @@ above. @racket[src] that is not a resource raises an argument error.
 @defmodule[fml/parser/parse]
 
 @defproc[(parse-fml [src string?] [#:source source (or/c string? path? #f) #f]) (or/c ok? err?)]{
-@racket[(ok fml-map)], or @racket[(err cql-error)] carrying a diagnostic positioned in
+@racket[(ok fml-map)], or @racket[(err fml-error)] carrying a diagnostic positioned in
 @racket[source]. The AST (@tt{fml/parser/ast}) is prefab: @racket[fml-map] (url, name, metadata,
 uses, imports, groups, conceptmaps), @racket[fml-group], @racket[fml-rule] (sources, targets,
 dependents, nested rules), @racket[fml-source], @racket[fml-target] (context @racket[#f] for a bare

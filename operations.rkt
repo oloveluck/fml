@@ -16,7 +16,7 @@
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/diagnostic diagnostic-message exn:fail:diagnostic? exn:fail:diagnostic-diagnostic diagnostics->operation-outcome)
-         (only-in cql/error cql-error-string)
+         (only-in "error.rkt" fml-error-string)
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap structuremap->fml)
          (only-in fml/transform run-map resolve-structure-map registered-structure-maps))
@@ -31,7 +31,7 @@
                (define r (parse-fml text))
                (if (ok? r)
                    (ok-value r)
-                   (operation-error "invalid" "$transform: the FML map does not parse: ~a" (cql-error-string (err-error r)))))))
+                   (operation-error "invalid" "$transform: the FML map does not parse: ~a" (fml-error-string (err-error r)))))))
 
 (define $transform
   (make-operation

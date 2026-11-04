@@ -21,7 +21,7 @@
          (only-in fml/transform run-map uses-types)
          (only-in fml/check check-map check-map/examples)
          (only-in fhir/diagnostic diagnostic-severity)
-         (only-in cql/error cql-error-string cql-error-diagnostic cql-error-message)
+         (only-in "error.rkt" fml-error-string fml-error-diagnostic fml-error-message)
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc emit-diagnostics format-flag)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
@@ -51,7 +51,7 @@
   (define r (parse-fml src #:source file))
   (unless (ok? r)
     (define e (err-error r))
-    (report (or (cql-error-diagnostic e) (diagnostic 'fml 'parse 'error (cql-error-message e) (loc file #f #f #f #f))) src))
+    (report (or (fml-error-diagnostic e) (diagnostic 'fml 'parse 'error (fml-error-message e) (loc file #f #f #f #f))) src))
   (ok-value r))
 
 ;; compile-file : path-string -> void   print the StructureMap JSON

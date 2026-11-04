@@ -14,17 +14,17 @@
          "ast.rkt"
          (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
-         (only-in cql/error cql-error)
+         (only-in "../error.rkt" fml-error)
          (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc))
 
 (provide (contract-out
-          ;; (ok fml-map) | (err cql-error) — a parse error carries its diagnostic (positions in `source`)
+          ;; (ok fml-map) | (err fml-error) — a parse error carries its diagnostic (positions in `source`)
           [parse-fml (->* (string?) (#:source (or/c string? path? #f)) (or/c ok? err?))]))
 
 (define (parse-fml src #:source [source #f])
   (with-handlers ([exn:fail? (lambda (e)
                                (define d (exn->diagnostic e 'fml #:source source))
-                               (err (cql-error 'parse (diagnostic->string d) d)))])
+                               (err (fml-error 'parse (diagnostic->string d) d)))])
     (define-values (d locs) (syntax->datum/locs (g:parse (tokenize (open-input-string src)))))
     (parameterize ([current-locs locs] [current-source (and source (if (path? source) (path->string source) source))])
       (ok (lower-doc d)))))
