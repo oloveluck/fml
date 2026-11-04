@@ -102,7 +102,8 @@ external-constant   : EXTERNAL
 identifier          : IDENTIFIER | "as" | "is" | "in" | "contains" | "where" | "check" | "log"
                     | "first" | "last" | "single" | "share" | "default" | "div" | "mod"
                     | "source" | "target" | "map" | "uses" | "alias" | "let" | "group" | "extends"
-                    | "conceptmap" | "prefix"
+                    | "conceptmap" | "prefix" | "types" | "queried" | "produced" | "imports" | "then"
+                    | "not_first" | "not_last" | "only_one"
 
 ;; the FML dialect also admits "double-quoted" strings inside expressions (qr2cda-eval's iif)
 literal             : quantity | STRING | DELIM | BOOL | DATE | DATETIME | TIME | "{" "}"
