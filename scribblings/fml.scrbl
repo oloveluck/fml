@@ -17,7 +17,8 @@ Part of the @hyperlink["https://github.com/oloveluck/fhir"]{fhir} family; depend
 @section{Install}
 
 @verbatim{
-raco pkg install --link --auto fhir/fhir fhirpath cql fml      # from source, with the repos alongside
+raco pkg install --link --auto fhir/fhir fhirpath cql fml
+    # from source, with the repos alongside
 }
 
 @section{Writing a map}
@@ -63,7 +64,8 @@ FHIR JSON (or a typed node) in, FHIR JSON out. A parse error is a compile error.
 @racketblock[
 (require (only-in "intake.fml" [transform intake->reading])
          fhir/operation (only-in fhir/conformance/operations ensure-valid))
-(~> form intake->reading (ensure-valid #:profile profile))   (code:comment "map, then validate against a profile")
+(code:comment "map, then validate against a profile")
+(~> form intake->reading (ensure-valid #:profile profile))
 ]
 
 @bold{As an operation.} With the map as text, @tt{StructureMap/$transform} runs it; loading
@@ -80,10 +82,13 @@ FHIR JSON (or a typed node) in, FHIR JSON out. A parse error is a compile error.
 
 @racketblock[
 (require fml/parser/parse fml/structuremap fml/transform fhir/result/result
-         fhir/r5/schemas fhir/serialize/from-json)          (code:comment "the engine needs a tower")
+         (code:comment "the engine needs a tower")
+         fhir/r5/schemas fhir/serialize/from-json)
 (define m (ok-value (parse-fml text)))
-(fml->structuremap m)                                      (code:comment "the StructureMap jsexpr")
-(run-map m (ok-value (from-json qr #:lenient? #t)))        (code:comment "a typed source node -> the target jsexpr")
+(code:comment "the StructureMap jsexpr")
+(fml->structuremap m)
+(code:comment "a typed source node -> the target jsexpr")
+(run-map m (ok-value (from-json qr #:lenient? #t)))
 ]
 
 @bold{Command line.}
@@ -94,7 +99,7 @@ raco fml intake.fml --transform form.json    run the map over an R5 resource; pr
 raco fml --tck                               the structure-mapping suite
 }
 
-@tt{--format text|json|outcome} chooses how an error is reported. Exit codes: 0, 1 on an FML error or
+@litchar{--format text|json|outcome} chooses how an error is reported. Exit codes: 0, 1 on an FML error or
 a suite regression, 2 on usage.
 
 @section{Reference}
