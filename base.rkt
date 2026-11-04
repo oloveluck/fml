@@ -6,7 +6,7 @@
 ;;; composes with the other FHIR languages' modules; `#:structures` gives the StructureDefinitions of the
 ;;; map's logical models (a list of jsexprs, or a data source). Run the file to print the StructureMap.
 
-(require (for-syntax racket/base) json
+(require (for-syntax racket/base syntax/parse (only-in fml/parser/ast fml-map?)) json
          (only-in fml/structuremap fml->structuremap)
          (only-in fml/transform run-map uses-types register-structure-map!)
          (only-in fhir/registry register-resources!)
@@ -29,9 +29,17 @@
 
 (define-syntax-rule (fml-map-form ast) (quote ast))
 
+;; the module body the reader produces: exactly one (fml-map-form <fml-map>) — anything else is a
+;; precise error here, not a failure deep in the template
+(begin-for-syntax
+  (define-syntax-class map-form
+    #:description "one (fml-map-form <map>) form, as the #lang fml reader writes it"
+    (pattern ((~datum fml-map-form) ast)
+             #:fail-unless (fml-map? (syntax->datum #'ast)) "not an FML map AST")))
+
 (define-syntax (fml-module-begin stx)
-  (syntax-case stx ()
-    [(_ form)
+  (syntax-parse stx
+    [(_ form:map-form)
      #'(#%module-begin
         (define fml form)
         (register-structure-map! fml)                        ; resolvable by its url in this process
