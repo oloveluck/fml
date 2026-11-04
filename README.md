@@ -1,6 +1,8 @@
 # fml — FHIR Mapping Language for Racket
 
-The FHIR Mapping Language (hl7.org/fhir/R5/mapping-language.html): a brag port of the official `mapping.g4` with the FHIRPath grammar inlined (embedded expressions are real FHIRPath ASTs), StructureMap emission, a transform engine, and `#lang fml`. fhir-test-cases structure-mapping: 6/6 executable JSON tests, 15/15 parses.
+The FHIR Mapping Language (hl7.org/fhir/R5/mapping-language.html): a brag port of the official `mapping.g4` with the FHIRPath grammar inlined (embedded expressions are real FHIRPath ASTs), StructureMap emission, a transform engine over FHIR resources and logical models, and `#lang fml`.
+
+Corpora (`raco fml --tck`): fhir-test-cases structure-mapping 6/6 executable JSON tests, 15/15 parses; the matchbox engine's maps 43/43 parse, 17/17 run; the FHIR mapping-language tutorial 36/38 expected results (the two differences are named in `tests/matchbox-harness.rkt`); the FHIR R3/R4 inter-version maps 332/332 parse (CI, not vendored).
 
 Part of **fhir — FHIR as a family of Racket `#lang`s** ([oloveluck/fhir](https://github.com/oloveluck/fhir)).
 Collection `fml`. `#lang fml` — a `.map` file is a module; `racket file` prints the compiled JSON.
@@ -14,7 +16,7 @@ raco pkg install fml          # once published on pkgs.racket-lang.org
 raco pkg install --link --auto ../fhir/fhir .
 ```
 
-Depends on `fhir`, `fhirpath`, `cql` (for its error struct only — being removed).
+Depends on `fhir`, `fhir-tx` (`translate` over the terminology service), `fhirpath`, `cql` (for its error struct only — being removed).
 
 ## Use
 
@@ -25,8 +27,12 @@ Depends on `fhir`, `fhirpath`, `cql` (for its error struct only — being remove
 ```sh
 raco fml map.map                          # StructureMap JSON
 raco fml map.map --transform source.json  # run the map over an R5 resource
-raco fml --tck
+raco fml map.map --transform source.json --structures sds/   # with the logical models' StructureDefinitions
+raco fml --parse-corpus dir/              # parse every .map under a directory
+raco fml --tck                            # the corpora, with floors
 ```
+
+In a program, `(transform src #:structures sds)` from a `#lang fml` module; `run-map` and `uses-types` from `fml/transform`.
 
 ## Develop
 

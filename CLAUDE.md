@@ -41,3 +41,30 @@ from the assigned value's type — a primitive variable's own type, a constructo
 `create('T')` (`tgt.effective = a` -> `effectiveDateTime`); primitives render as their JSON form.
 `#lang fml`'s `transform` takes FHIR JSON (or a typed node) and answers FHIR JSON. TCK unchanged: 6/6 +
 15/15.
+
+**Second corpus: matchbox + the FML tutorial** (`tests/vendor/matchbox`, ahdis/matchbox's
+mapping-language test resources, Apache-2.0; `tests/matchbox-harness.rkt`; `raco fml --tck` runs both
+corpora with floors in `tests/run.rkt`): every map parses (43/43); the tutorial's 13 steps run over their
+logical models — each step's StructureDefinitions are the data source the map's `uses` resolve in — and
+compare to the expected results (**36/38**; an expected OperationOutcome means the run must fail); the
+top-level maps run over their sources (17/17; the Java tests assert single values, so no expected
+outputs). The two tutorial disagreements are NAMED in the harness (`tutorial-disagreements`): `only_one`
+over two elements is an error per spec (the reference keeps the last), and `where a.isInteger()` is false
+here (not a FHIRPath function; the reference copies anyway). CI also parses the FHIR R3/R4 inter-version
+maps (FHIR/interversion, 332 maps, no license so not vendored): 332/332.
+What the corpus drove in the engine (transform.rkt): types from `uses` — a url the towers lack is resolved
+as a StructureDefinition (data source, then packages) and registered through `fhir/sd/logical`
+(`uses-types`; a later definition of the same type name replaces the earlier — the tutorial's TLeft per
+step; tower types are never replaced); target slots carry the element's type and primitive code, so an
+assigned value is COERCED ("12345" -> 12345 into an integer element); implicit copy and `types`/`type+`
+group dispatch by the parameters' declared types; multi-source rules (cartesian), `check` (an error naming
+the rule), `log` (`current-fml-log`), all five source list modes, `extends`; `where` sees the alias bound
+to the candidate and may precede the alias; `cast` errors when the value does not convert; bare
+invocation targets (`evaluate(result, resolve()) as observation`, the value becomes a source); `create`
+of a resource type sets `resourceType`; `reference(var)` of a built target; `translate` over an embedded
+`conceptmap` block (parsed into `fml-conceptmap`, emitted as a contained ConceptMap) or via
+`fhir/terminology/service`'s `translate/json` through `current-terminology-resolver`; `uuid`. Grammar:
+`conceptmap` anywhere among the declarations, `unmapped for s = provided`, the FHIRPath `is` operator
+(only `as` stays out — it is the target alias), the mode words as identifiers, a map with no groups (a
+conceptmap library). `raco fml <map> --transform <src> --structures <file|dir>`, `--parse-corpus <dir>`;
+`#lang fml`'s `transform` takes `#:structures`.

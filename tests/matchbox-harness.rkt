@@ -25,6 +25,8 @@
 (provide (contract-out
           [struct tally ([passed exact-nonnegative-integer?] [total exact-nonnegative-integer?]
                          [failures list?])]
+          ;; the tutorial cases this engine answers differently from the reference, each with why
+          [tutorial-disagreements (listof (list/c string? string?))]
           ;; parse-corpus : dir -> tally   every .map under dir (recursively) parses
           [parse-corpus (-> path-string? tally?)]
           ;; run-tutorial : matchbox-dir -> tally   the tutorial steps' expected results
@@ -61,6 +63,13 @@
     (run-map m (ok-value sr))))
 
 (define (expected-error? j) (and (hash? j) (equal? (hash-ref j 'resourceType #f) "OperationOutcome")))
+
+;; Two expected results encode the reference engine's leniency rather than the specification:
+(define tutorial-disagreements
+  '(("step4/step4b.source4.json"
+     "`where a.isInteger()`: isInteger is not a FHIRPath function (the map says so itself); the reference copies the value anyway, this engine's where is false")
+    ("step6/step6b.source6b.json"
+     "`src.a23 only_one` over two elements: the specification makes it an error; the reference keeps the last value")))
 
 (define (run-tutorial dir)
   (define steps (sort (for/list ([d (directory-list (build-path dir "tutorial") #:build? #t)]
@@ -138,4 +147,7 @@
   (check-true (> (tally-total p) 40))
   ;; step1 is the simplest map there is: one rule, one string copied
   (define t (run-tutorial vendor))
-  (check-false (assoc "step1/step1.source1.json" (tally-failures t)) "tutorial step 1"))
+  (check-false (assoc "step1/step1.source1.json" (tally-failures t)) "tutorial step 1")
+  ;; every other case agrees with the reference; the two disagreements are named above
+  (check-equal? (map car (tally-failures t)) (map car tutorial-disagreements))
+  (check-true (>= (tally-passed (run-smoke vendor)) 17)))

@@ -9,7 +9,7 @@
 ;; only parenthesized) expression, `share` carries a listRuleId, and a rule name may be a
 ;; double-quoted string.
 
-fml-doc         : metadata* map-decl? (conceptmap | structure | imports | const)* fgroup+
+fml-doc         : metadata* map-decl? (conceptmap | structure | imports | const)* fgroup*
 
 ;; the R4 mapping language's embedded concept map (dropped from the R5 g4, still written and run by
 ;; the reference implementation): prefixes name code systems, mappings pair codes
