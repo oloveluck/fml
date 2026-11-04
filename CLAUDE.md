@@ -71,3 +71,32 @@ of a resource type sets `resourceType`; `reference(var)` of a built target; `tra
 (only `as` stays out — it is the target alias), the mode words as identifiers, a map with no groups (a
 conceptmap library). `raco fml <map> --transform <src> --structures <file|dir>`, `--parse-corpus <dir>`;
 `#lang fml`'s `transform` takes `#:structures`.
+
+**The StructureMap as the interchange form; maps as values; check** (the family's ELM analogy made
+real). `structuremap.rkt` goes both ways: `structuremap->fml` reads a StructureMap resource into the
+AST the engine runs (FHIRPath strings parsed and memoized, typed literal parameters, R4 `equivalence`
+and `dependent.variable` understood) — the law `structuremap->fml ∘ fml->structuremap = id` holds on
+every corpus map (58/58) up to the FML-only surface (`///` metadata, conceptmap prefixes, `rule-N`
+names; `copy(v)` lowers as `v`; a numeric/boolean literal is a copy of a typed value as the reference
+writes it; target list modes first/last/single are kept). `transform.rkt`: `register-structure-map!`,
+`resolve-structure-map` (registered maps — a required `#lang fml` module registers its own — then
+StructureMaps in `current-data-source`, then the packages: `sd-index` now indexes StructureMap and
+ConceptMap), `map-imports`; a group is found in the map or any map it imports, transitively.
+`registry.rkt`: `(structure-map ref)` — canonical, AST or resource — is a typed procedure (`smap-source`/
+`smap-target` from the entry group's parameters and `uses`), `compose-maps` checks the types;
+`$transform` takes `source` (canonical) and `sourceMap` (resource) besides `srcMap`. Oracles: the
+tutorial run from OUR emitted StructureMaps by canonical (37/37); from the REFERENCE's `map/*.json`
+(30/37 — several of those resources predate their .map: stale conditions, a missing rule; named,
+floor 30); our StructureMap vs the reference's rule by rule, names/documentation/R4-isms normalised
+(21/31; the rest are stale conditions and the reference's synthetic variables).
+`check.rkt` (`raco fml check`, `check-map`, `check-map/examples`): rules, sources, targets and groups
+remember their positions (parse.rkt keeps brag's syntax, `syntax->datum/locs`, `attach-loc!`); the
+check reports what the two StructureDefinitions decide — an element the type lacks (choice bases
+through the schema's `choice-base`, a `raw` leaf is a string), a value whose type cannot go into the
+element, a group call's arity or an unknown group, a required target element never assigned (warning,
+unless a dependent call receives the whole target) — fail-open on anything unknown; with examples,
+each result is validated (fhir-validation on demand) and an issue traced to the rule that wrote the
+element (`target-paths`/`trace-target`). The corpora check clean but for three REAL findings (55/58):
+`contributor` and `Composition.code` are R4 elements R5 dropped, `identifer` is a typo in syntax.map.
+`project.rkt` is what fsh loads on demand (`parse-map-file`, `map-structuremap`, `check-project-map`)
+so a project of FSH structures holds its maps; the worked project is fhir-examples/examples/intake-maps.
