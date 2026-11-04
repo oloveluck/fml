@@ -15,7 +15,7 @@
          fhir/operation
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in fhir/serialize/from-json from-json)
-         (only-in fhir/diagnostic diagnostic-message)
+         (only-in fhir/diagnostic diagnostic-message exn:fail:diagnostic? exn:fail:diagnostic-diagnostic diagnostics->operation-outcome)
          (only-in cql/error cql-error-string)
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap structuremap->fml)
@@ -50,7 +50,10 @@
      (define content (input in "content"))
      (define node (from-json content #:lenient? #t))
      (unless (ok? node) (operation-error "invalid" "$transform: the content is not a FHIR resource"))
-     (run-map m (ok-value node)))))
+     (with-handlers ([exn:fail:diagnostic?
+                      (lambda (e) (raise (exn:fail:operation (exn-message e) (current-continuation-marks)
+                                                             (diagnostics->operation-outcome (list (exn:fail:diagnostic-diagnostic e))))))])
+       (run-map m (ok-value node))))))
 
 (register-operation! $transform)
 

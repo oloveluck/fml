@@ -36,6 +36,8 @@
          (only-in fhir/model/registry type-registered? type-schema-of primitive-name?)
          (only-in fhir/sd/logical register-structure-definition! resolve-structure-definition/data)
          (only-in fhir/sd/sd-index resolve-canonical-raw)
+         (only-in fhir/registry registered-resource)
+         (only-in fhir/diagnostic diagnostic loc raise-diagnostic attached-loc)
          (only-in fhir/data-source current-data-source data-source-all)
          (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
@@ -59,7 +61,8 @@
           ;; register-structure-map! : map -> void   resolvable by its url in this process
           [register-structure-map! (-> fml-map? void?)]
           ;; resolve-structure-map : canonical -> map | #f   registered maps, then StructureMaps in
-          ;; the current data source, then the packages (|version ignored)
+          ;; the current data source, the resources modules registered (fhir/registry), then the
+          ;; packages (|version ignored)
           [resolve-structure-map (-> string? (or/c fml-map? #f))]
           ;; registered-structure-maps : -> (listof url)
           [registered-structure-maps (-> (listof string?))]
@@ -80,6 +83,7 @@
       (let ([sm (findf (lambda (r) (equal? (hash-ref r 'url #f) key))
                        ((data-source-all (current-data-source)) "StructureMap"))])
         (and sm (as-ast sm)))
+      (let ([sm (registered-resource "StructureMap" key)]) (and sm (as-ast sm)))
       (let ([sm (resolve-canonical-raw "StructureMap" key)]) (and sm (as-ast sm)))))
 
 (define (map-imports m)
@@ -277,7 +281,7 @@
          (define sc1 (bind (if (fml-source-variable s) (bind sc (fml-source-variable s) elem) sc) source-key elem))
          (when (fml-source-check s)
            (unless (fp-true? (fml-source-check s) elem sc1)
-             (error 'fml "Rule ~s: check condition failed: ~a" (rule-label r) (fhirpath->string (fml-fhirpath-ast (fml-source-check s))))))
+             (rule-error r "check condition failed: ~a" (fhirpath->string (fml-fhirpath-ast (fml-source-check s))))))
          (when (fml-source-log-expr s)
            ((current-fml-log) (string-join (for/list ([i (in-list (fp-items (fml-fhirpath-ast (fml-source-log-expr s)) elem sc1))])
                                              (format "~a" (item->jsexpr i)))
@@ -288,6 +292,13 @@
   (or (fml-rule-name r)
       (let ([s (car (fml-rule-sources r))])
         (string-append (fml-source-context s) (if (fml-source-element s) (string-append "." (fml-source-element s)) "")))))
+
+;; rule-error : rule format args … -> raises exn:fail:diagnostic   a failure while running a rule is
+;; a diagnostic positioned at the rule (parse.rkt attached where it was written), so it renders as a
+;; parse error does and $transform returns it as an OperationOutcome with the line
+(define (rule-error r fmt . args)
+  (raise-diagnostic (diagnostic 'fml 'transform 'error (format "Rule ~s: ~a" (rule-label r) (apply format fmt args))
+                                (or (attached-loc r) (loc #f #f #f #f #f)))))
 
 (define (run-rule-body c r sc)
   ;; a lone untransformed target carries the source value over (the specification's default)
@@ -301,7 +312,7 @@
 ;; where-filtered, in the clause's list mode
 (define (source-matches c r s sc)
   (define context (lookup sc (fml-source-context s)))
-  (unless context (error 'fml "Rule ~s: unbound source variable ~a" (rule-label r) (fml-source-context s)))
+  (unless context (rule-error r "unbound source variable ~a" (fml-source-context s)))
   (define base
     (cond [(not (fml-source-element s)) (list context)]
           [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
@@ -319,7 +330,7 @@
     [(not_first) (if (pair? filtered) (cdr filtered) '())]
     [(not_last) (if (pair? filtered) (drop-right filtered 1) '())]
     [(only_one) (if (> (length filtered) 1)
-                    (error 'fml "Rule ~s: ~a.~a matches ~a elements, only_one allows one" (rule-label r)
+                    (rule-error r "~a.~a matches ~a elements, only_one allows one"
                            (fml-source-context s) (fml-source-element s) (length filtered))
                     filtered)]
     [else filtered]))
@@ -341,7 +352,7 @@
 
 (define (run-element-target c r t sc implicit?)
   (define context (lookup sc (fml-target-context t)))
-  (unless (tslot? context) (error 'fml "Rule ~s: target context ~a is not a target" (rule-label r) (fml-target-context t)))
+  (unless (tslot? context) (rule-error r "target context ~a is not a target" (fml-target-context t)))
   (define tr (fml-target-transform t))
   (define src-elem (lookup sc source-key))
   ;; the value's type decides a choice element's key (value + T)
@@ -397,12 +408,12 @@
      (cond [(fhir? src) (format "~a/~a" (fhir-type src) (pv (fhir-ref src 'id #f)))]
            [(tslot? src) (let ([js ((tslot-get src))])
                            (format "~a/~a" (hash-ref js 'resourceType "") (hash-ref js 'id "")))]
-           [else (error 'fml "Rule ~s: reference() needs a resource, ~a is not one" (rule-label r) v)])]
+           [else (rule-error r "reference() needs a resource, ~a is not one" v)])]
     [(fml-invoke "cast" (list v (fml-literal ty)))
      (define raw (value->jsexpr (lookup sc v)))
      (define out (coerce raw ty))
      (when (and (string? out) (member ty '("integer" "integer64" "positiveInt" "unsignedInt" "decimal" "boolean")))
-       (error 'fml "Rule ~s: Failed to cast ~v to type ~s" (rule-label r) raw ty))
+       (rule-error r "Failed to cast ~v to type ~s" raw ty))
      out]
     [(fml-invoke "evaluate" (list v (fml-fhirpath ast)))
      (fp-scalar-over ast (lookup sc v) sc)]
@@ -422,7 +433,7 @@
     [(fml-invoke name _)
      (error 'fml "Rule ~s: the transform ~a is not supported (supported: create copy reference cast evaluate truncate translate uuid c cc qty id cp append)"
             (rule-label r) name)]
-    [_ (error 'fml "Rule ~s: unsupported transform ~a" (rule-label r) tr)]))
+    [_ (rule-error r "unsupported transform ~a" tr)]))
 
 ;; arg-value : a transform argument -> its jsexpr value (literal, variable, or FHIRPath)
 (define (arg-value a sc)
@@ -443,7 +454,7 @@
       [(regexp-match? #rx"^#" map-url)
        (define cm (findf (lambda (cm) (equal? (fml-conceptmap-name cm) (substring map-url 1)))
                          (fml-map-conceptmaps (ctx-map c))))
-       (unless cm (error 'fml "Rule ~s: no conceptmap ~s in this map" (rule-label r) map-url))
+       (unless cm (rule-error r "no conceptmap ~s in this map" map-url))
        (define m (findf (lambda (m) (and (equal? (vector-ref m 1) code)
                                          (or (not system) (equal? (vector-ref m 0) system))))
                         (fml-conceptmap-mappings cm)))
@@ -608,7 +619,8 @@
            (only-in "parser/parse.rkt" parse-fml)
            (only-in fhir/serialize/from-json from-json)
            (only-in fhir/result/result ok-value)
-           (only-in fhir/data-source current-data-source resources->data-source))
+           (only-in fhir/data-source current-data-source resources->data-source)
+           (only-in fhir/diagnostic exn:fail:diagnostic? exn:fail:diagnostic-diagnostic diagnostic-loc loc-line))
   (define qr (ok-value (from-json (hasheq 'resourceType "QuestionnaireResponse" 'id "12345" 'status "completed"
                                           'item (list (hasheq 'linkId "patient.sex"
                                                               'answer (list (hasheq 'valueString "female")))))
@@ -653,7 +665,13 @@ EOF
   (parameterize ([current-data-source (resources->data-source sds)])
     (uses-types m2)                                      ; TLeft/TRight exist before the source is read
     (define left (ok-value (from-json (hasheq 'resourceType "TLeft" 'a "12345" 'd "vonhier" 'aa (list (hasheq 'ab "x"))))))
-    (check-equal? (run-map m2 left) (hash 'resourceType "TRight" 'a 12345 'd "nach-da" 'aa (list (hash 'ab "x!")))))
+    (check-equal? (run-map m2 left) (hash 'resourceType "TRight" 'a 12345 'd "nach-da" 'aa (list (hash 'ab "x!"))))
+    ;; a check that fails is a diagnostic at the rule's line
+    (define long (ok-value (from-json (hasheq 'resourceType "TLeft" 'd "this-code-is-far-too-long-for-the-check"))))
+    (define e (with-handlers ([exn:fail:diagnostic? values]) (run-map m2 long)))
+    (check-true (exn:fail:diagnostic? e))
+    (check-equal? (loc-line (diagnostic-loc (exn:fail:diagnostic-diagnostic e))) 11)
+    (check-regexp-match #rx"check condition failed" (exn-message e)))
   ;; a dependent group from an IMPORTED map: the import is a StructureMap resource in the data source
   (require (only-in "structuremap.rkt" fml->structuremap))
   (define lib (ok-value (parse-fml (string-append

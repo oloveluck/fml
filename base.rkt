@@ -9,6 +9,7 @@
 (require (for-syntax racket/base) json
          (only-in fml/structuremap fml->structuremap)
          (only-in fml/transform run-map uses-types register-structure-map!)
+         (only-in fhir/registry register-resources!)
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value)
@@ -35,6 +36,7 @@
         (define fml form)
         (register-structure-map! fml)                        ; resolvable by its url in this process
         (define structuremap (fml->structuremap fml))
+        (register-resources! (list structuremap) #:source (variable-reference->module-source (#%variable-reference)))
         (define (transform src #:structures [structures #f])
           (parameterize ([current-data-source
                           (cond [(not structures) (current-data-source)]
