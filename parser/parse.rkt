@@ -68,7 +68,7 @@
 ;; ---- lowering ---------------------------------------------------------------
 (define (lower-doc d)
   (define metadata (for/list ([m (in-list (kids d 'metadata))])
-                     (match (regexp-match #px"^\\s*(\\w+)\\s*=\\s*\"([^\"]*)\"" (cadr m))
+                     (match (regexp-match #px"^\\s*(\\w+)\\s*=\\s*[\"']([^\"']*)[\"']" (cadr m))
                        [(list _ k v) (cons k v)]
                        [_ (cons "" (cadr m))])))
   (define md (kid d 'map-decl))
