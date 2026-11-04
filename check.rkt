@@ -42,118 +42,142 @@
 ;; decide, fail-open); `path-type` walks a dotted path through the schema.
 
 ;; ---- the walk -------------------------------------------------------------------
-;; A Scope maps a variable name to (cons 'source|'target Ty)
+;; A Binding is (binding mode ty): what a variable names — mode 'source | 'target, ty a Ty
+;; A Scope is (hash name -> Binding)
+;; A Cx is (cx types groups map at): the `uses` resolved to type symbols, every callable group (this
+;; map's and its imports'), the map, and `at` : node -> loc (where a finding points)
+;; Every check is a function of the data it checks, returning the findings (listof diagnostic) — a
+;; binding step returns (values scope findings).
+(struct binding (mode ty) #:transparent)
+(struct cx (types groups map at))
+
 (define (check-map m #:source [source #f])
-  (define types (uses-types m))
-  (define maps (map-imports m))
-  (define all-groups (append-map fml-map-groups maps))
-  (define (type-sym name) (and name (or (hash-ref types name #f) (and (type-registered? (string->symbol name)) (string->symbol name)))))
-  (define findings '())
-  (define (report! node severity fmt . args)
-    (set! findings (cons (diagnostic 'fml 'check severity (apply format fmt args)
-                                     (or (attached-loc node) (loc (and source (if (path? source) (path->string source) source)) #f #f #f #f)))
-                         findings)))
-  ;; a group's scope from its parameters
-  (define (group-scope g)
-    (for/hash ([p (in-list (fml-group-params g))])
-      (values (fml-param-name p) (cons (fml-param-mode p) (type-sym (fml-param-type p))))))
-  (define (check-group g)
-    (for ([r (in-list (fml-group-rules g))]) (check-rule r (group-scope g))))
-  (define (check-rule r sc)
-    ;; sources bind their variables
-    (define sc1
-      (for/fold ([sc sc]) ([s (in-list (fml-rule-sources r))])
-        (define ctx (hash-ref sc (fml-source-context s) #f))
-        (define ctx-ty (and ctx (cdr ctx)))
-        (cond
-          [(not ctx) (report! s 'error "`~a` is not a variable in scope" (fml-source-context s)) sc]
-          [(not (fml-source-element s)) (if (fml-source-variable s) (hash-set sc (fml-source-variable s) (cons 'source ctx-ty)) sc)]
-          [else
-           (define-values (missing ty) (if (symbol? ctx-ty) (path-type ctx-ty (fml-source-element s)) (values #f #f)))
-           (when missing (report! s 'error "`~a` is not an element of ~a" missing (ty->string ty)))
-           (if (fml-source-variable s) (hash-set sc (fml-source-variable s) (cons 'source (and (not missing) ty))) sc)])))
-    ;; targets: the element exists, the value fits, the variable binds
-    (define sc2
-      (for/fold ([sc sc1]) ([t (in-list (fml-rule-targets r))])
-        (cond
-          [(not (fml-target-context t))                       ; a bare invocation target
-           (if (fml-target-variable t) (hash-set sc (fml-target-variable t) (cons 'source #f)) sc)]
-          [else
-           (define ctx (hash-ref sc (fml-target-context t) #f))
-           (cond
-             [(not ctx) (report! t 'error "`~a` is not a variable in scope" (fml-target-context t)) sc]
-             [(eq? (car ctx) 'source) (report! t 'error "`~a` is a source; a target context must be a target" (fml-target-context t)) sc]
-             [else
-              (define ctx-ty (cdr ctx))
-              (define-values (missing ty)
-                (cond [(not (fml-target-element t)) (values #f ctx-ty)]
-                      [(symbol? ctx-ty) (path-type ctx-ty (fml-target-element t))]
-                      [else (values #f #f)]))
-              (when missing (report! t 'error "`~a` is not an element of ~a" missing (ty->string ty)))
-              (define elem-ty (and (not missing) ty))
-              (check-assignment t (fml-target-transform t) elem-ty sc)
-              (if (fml-target-variable t) (hash-set sc (fml-target-variable t) (cons 'target (value-type-of t elem-ty sc))) sc)])])))
-    ;; dependents: the group and its arity
-    (for ([d (in-list (fml-rule-dependents r))])
-      (define g (findf (lambda (g) (equal? (fml-group-name g) (fml-call-name d))) all-groups))
-      (cond [(and (not g) (null? (fml-map-imports m)))
-             (report! r 'error "no group ~a in this map (groups: ~a)" (fml-call-name d) (string-join (map fml-group-name all-groups) ", "))]
-            [(and g (not (= (length (fml-call-args d)) (length (fml-group-params g)))))
-             (report! r 'error "group ~a takes ~a parameters, called with ~a" (fml-call-name d) (length (fml-group-params g)) (length (fml-call-args d)))]
-            [else (void)])
-      (for ([a (in-list (fml-call-args d))] #:when (and (string? a) (not (hash-ref sc2 a #f))))
-        (report! r 'error "`~a` is not a variable in scope" a)))
-    (for ([n (in-list (fml-rule-nested r))]) (check-rule n sc2)))
-  ;; the type a target variable gets: create('T') names it; otherwise the element's
-  (define (value-type-of t elem-ty sc)
-    (match (fml-target-transform t)
-      [(fml-invoke "create" (list (fml-literal ty))) (or (type-sym ty) elem-ty)]
-      [_ elem-ty]))
-  ;; what the structures decide about an assignment
-  (define (check-assignment t tr elem-ty sc)
-    (define (complex? ty) (and (symbol? ty) #t))
-    (define (var-ty name) (let ([b (hash-ref sc name #f)]) (and b (cdr b))))
-    (match tr
-      [(fml-literal v) #:when (complex? elem-ty)
-       (report! t 'error "a string cannot be assigned to ~a, a ~a" (fml-target-element t) elem-ty)]
-      [(fml-var name)
-       (define vty (var-ty name))
-       (cond [(not (hash-ref sc name #f)) (report! t 'error "`~a` is not a variable in scope" name)]
-             [(and (complex? vty) (prim? elem-ty))
-              (report! t 'error "~a is a ~a; it cannot be assigned to ~a, a ~a" name vty (fml-target-element t) (prim-code elem-ty))]
-             [(and (prim? vty) (complex? elem-ty))
-              (report! t 'error "~a is a ~a; it cannot be assigned to ~a, a ~a" name (prim-code vty) (fml-target-element t) elem-ty)]
-             [else (void)])]
-      [(fml-invoke name args)
-       (for ([a (in-list args)] #:when (and (string? a) (not (hash-ref sc a #f))))
-         (report! t 'error "`~a` is not a variable in scope" a))]
-      [_ (void)]))
-  (for ([g (in-list (fml-map-groups m))]) (check-group g))
-  ;; required target elements the entry group never assigns
-  (define entry (and (pair? (fml-map-groups m)) (car (fml-map-groups m))))
-  (when entry
-    (define tparam (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry)))
-    (define tty (and tparam (type-sym (fml-param-type tparam))))
-    (define specs (and (symbol? tty) (with-handlers ([exn:fail? (lambda (_) #f)]) (full-field-specs tty))))
-    (when specs
-      (define written
-        (let collect ([rules (fml-group-rules entry)] [acc '()])
-          (for/fold ([acc acc]) ([r (in-list rules)])
-            (define here (for/list ([t (in-list (fml-rule-targets r))]
-                                    #:when (and (equal? (fml-target-context t) (fml-param-name tparam)) (fml-target-element t)))
-                           (car (string-split (fml-target-element t) "."))))
-            (collect (fml-rule-nested r) (append here acc)))))
-      ;; a dependent group given the whole target may write anything
-      (define calls-out? (let any ([rules (fml-group-rules entry)])
-                           (for/or ([r (in-list rules)])
-                             (or (for/or ([d (in-list (fml-rule-dependents r))]) (member (fml-param-name tparam) (fml-call-args d)))
-                                 (any (fml-rule-nested r))))))
-      (unless calls-out?
-        (for ([f (in-list specs)] #:when (and (field-spec? f) (>= (fs-min f) 1)
-                                              (not (member (symbol->string (fs-name f)) written))))
-          (report! entry 'warning "~a.~a is required (min ~a) but no rule of ~a assigns it"
-                   tty (fs-name f) (fs-min f) (fml-group-name entry))))))
-  (reverse findings))
+  (define fallback (loc (and source (if (path? source) (path->string source) source)) #f #f #f #f))
+  (define c (cx (uses-types m) (append-map fml-map-groups (map-imports m)) m
+                (lambda (node) (or (attached-loc node) fallback))))
+  (append (append-map (lambda (g) (check-group c g)) (fml-map-groups m))
+          (check-required c)))
+
+(define (finding c node severity fmt . args)
+  (diagnostic 'fml 'check severity (apply format fmt args) ((cx-at c) node)))
+(define (findings-if test c node fmt . args) (if test (list (apply finding c node 'error fmt args)) '()))
+
+;; type-of : cx type-name|#f -> Ty   a declared type: an alias from `uses`, else a registered type
+(define (type-of c name)
+  (and name (or (hash-ref (cx-types c) name #f) (and (type-registered? (string->symbol name)) (string->symbol name)))))
+;; path-type/ty : Ty path -> (values missing ty)   only a known complex type decides anything
+(define (path-type/ty ty path) (if (symbol? ty) (path-type ty path) (values #f #f)))
+
+(define (group-scope c g)
+  (for/hash ([p (in-list (fml-group-params g))])
+    (values (fml-param-name p) (binding (fml-param-mode p) (type-of c (fml-param-type p))))))
+(define (check-group c g) (check-rules c (fml-group-rules g) (group-scope c g)))
+(define (check-rules c rules sc) (append-map (lambda (r) (check-rule c r sc)) rules))
+
+;; a rule: its sources bind, then its targets, then the dependents and nested rules see both
+(define (check-rule c r sc)
+  (define-values (sc1 ds1) (bind-all c bind-source (fml-rule-sources r) sc))
+  (define-values (sc2 ds2) (bind-all c bind-target (fml-rule-targets r) sc1))
+  (append ds1 ds2
+          (append-map (lambda (d) (check-dependent c r d sc2)) (fml-rule-dependents r))
+          (check-rules c (fml-rule-nested r) sc2)))
+(define (bind-all c bind xs sc)
+  (for/fold ([sc sc] [ds '()]) ([x (in-list xs)])
+    (define-values (sc* ds*) (bind c x sc))
+    (values sc* (append ds ds*))))
+
+;; a source clause: its context must be in scope, its element on the context's type; `as` binds
+(define (bind-source c s sc)
+  (define b (hash-ref sc (fml-source-context s) #f))
+  (define (bound ty) (if (fml-source-variable s) (hash-set sc (fml-source-variable s) (binding 'source ty)) sc))
+  (cond
+    [(not b) (values sc (list (finding c s 'error "`~a` is not a variable in scope" (fml-source-context s))))]
+    [(not (fml-source-element s)) (values (bound (binding-ty b)) '())]
+    [else
+     (define-values (missing ty) (path-type/ty (binding-ty b) (fml-source-element s)))
+     (values (bound (and (not missing) ty))
+             (findings-if missing c s "`~a` is not an element of ~a" missing (ty->string ty)))]))
+
+;; a target clause: a target context in scope, the element on its type, a value that fits; `as` binds
+(define (bind-target c t sc)
+  (define b (and (fml-target-context t) (hash-ref sc (fml-target-context t) #f)))
+  (define (bound ty) (if (fml-target-variable t) (hash-set sc (fml-target-variable t) (binding 'target ty)) sc))
+  (cond
+    [(not (fml-target-context t))                        ; a bare invocation: its value is a source
+     (values (if (fml-target-variable t) (hash-set sc (fml-target-variable t) (binding 'source #f)) sc) '())]
+    [(not b) (values sc (list (finding c t 'error "`~a` is not a variable in scope" (fml-target-context t))))]
+    [(eq? (binding-mode b) 'source)
+     (values sc (list (finding c t 'error "`~a` is a source; a target context must be a target" (fml-target-context t))))]
+    [else
+     (define-values (missing ty)
+       (if (fml-target-element t) (path-type/ty (binding-ty b) (fml-target-element t)) (values #f (binding-ty b))))
+     (define elem-ty (and (not missing) ty))
+     (values (bound (created-type c t elem-ty))
+             (append (findings-if missing c t "`~a` is not an element of ~a" missing (ty->string ty))
+                     (check-assignment c t elem-ty sc)))]))
+
+;; the type a target variable gets: create('T') names it; otherwise the element's
+(define (created-type c t elem-ty)
+  (match (fml-target-transform t)
+    [(fml-invoke "create" (list (fml-literal ty))) (or (type-of c ty) elem-ty)]
+    [_ elem-ty]))
+
+;; what the structures decide about an assignment: a string into a complex element, a complex
+;; variable into a primitive one (or the reverse), a variable not in scope
+(define (check-assignment c t elem-ty sc)
+  (define (complex? ty) (and (symbol? ty) #t))
+  (define (unbound a) (findings-if (and (string? a) (not (hash-ref sc a #f))) c t "`~a` is not a variable in scope" a))
+  (match (fml-target-transform t)
+    [(fml-literal _) (findings-if (complex? elem-ty) c t "a string cannot be assigned to ~a, a ~a" (fml-target-element t) elem-ty)]
+    [(fml-var name)
+     (define b (hash-ref sc name #f))
+     (define vty (and b (binding-ty b)))
+     (cond [(not b) (unbound name)]
+           [(and (complex? vty) (prim? elem-ty))
+            (list (finding c t 'error "~a is a ~a; it cannot be assigned to ~a, a ~a" name vty (fml-target-element t) (prim-code elem-ty)))]
+           [(and (prim? vty) (complex? elem-ty))
+            (list (finding c t 'error "~a is a ~a; it cannot be assigned to ~a, a ~a" name (prim-code vty) (fml-target-element t) elem-ty))]
+           [else '()])]
+    [(fml-invoke _ args) (append-map unbound args)]
+    [_ '()]))
+
+;; a dependent call: the group exists (here or in an import), its arity, its arguments in scope
+(define (check-dependent c r d sc)
+  (define g (findf (lambda (g) (equal? (fml-group-name g) (fml-call-name d))) (cx-groups c)))
+  (append
+   (cond [(and (not g) (null? (fml-map-imports (cx-map c))))
+          (list (finding c r 'error "no group ~a in this map (groups: ~a)" (fml-call-name d)
+                         (string-join (map fml-group-name (cx-groups c)) ", ")))]
+         [(and g (not (= (length (fml-call-args d)) (length (fml-group-params g)))))
+          (list (finding c r 'error "group ~a takes ~a parameters, called with ~a"
+                         (fml-call-name d) (length (fml-group-params g)) (length (fml-call-args d))))]
+         [else '()])
+   (append-map (lambda (a) (findings-if (and (string? a) (not (hash-ref sc a #f))) c r "`~a` is not a variable in scope" a))
+               (fml-call-args d))))
+
+;; the entry group's target type: a required element (min >= 1) no rule of the group assigns is a
+;; warning — unless a dependent call receives the whole target, which may write anything
+(define (check-required c)
+  (define entry (and (pair? (fml-map-groups (cx-map c))) (car (fml-map-groups (cx-map c)))))
+  (define tparam (and entry (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry))))
+  (define tty (and tparam (type-of c (fml-param-type tparam))))
+  (define specs (and (symbol? tty) (with-handlers ([exn:fail? (lambda (_) #f)]) (full-field-specs tty))))
+  (define tname (and tparam (fml-param-name tparam)))
+  (define (rules-of rules f) (append-map (lambda (r) (append (f r) (rules-of (fml-rule-nested r) f))) rules))
+  (define (written r)
+    (for/list ([t (in-list (fml-rule-targets r))] #:when (and (equal? (fml-target-context t) tname) (fml-target-element t)))
+      (car (string-split (fml-target-element t) "."))))
+  (define (handed-over r)
+    (for/list ([d (in-list (fml-rule-dependents r))] #:when (member tname (fml-call-args d))) d))
+  (cond
+    [(not specs) '()]
+    [(pair? (rules-of (fml-group-rules entry) handed-over)) '()]
+    [else
+     (define assigned (rules-of (fml-group-rules entry) written))
+     (for/list ([f (in-list specs)]
+                #:when (and (field-spec? f) (>= (fs-min f) 1) (not (member (symbol->string (fs-name f)) assigned))))
+       (finding c entry 'warning "~a.~a is required (min ~a) but no rule of ~a assigns it"
+                tty (fs-name f) (fs-min f) (fml-group-name entry)))]))
 
 ;; ---- examples, validated ----------------------------------------------------------
 (define (check-map/examples m examples #:profiles [profiles '()] #:source [source #f])
