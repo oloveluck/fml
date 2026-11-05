@@ -222,6 +222,14 @@ the parent group first. @tt{translate} uses an embedded @tt{conceptmap} block or
 terminology service can see. Errors name the rule and, for an unknown transform or group, what is
 supported.
 
+@section{In an editor, for an agent}
+
+@tt{fml/support} is what the family's language server (fhir-lsp) and MCP server (fhir-mcp) load for
+FML: a map's diagnostics (parse, then the check against its structures), the maps beside it as its
+project, the declarations as an outline, hover, go to definition (an @tt{imports} url leads to the
+map that declares it), and completion of declared names and keywords. It is a @tt{fhir/lang/support}
+value; @tt{$transform} is already an operation, so no tool is added.
+
 @section{Limits}
 
 @itemlist[
