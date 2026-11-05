@@ -4,31 +4,28 @@
 
 @title{fml: the FHIR Mapping Language for Racket}
 
-The @hyperlink["https://hl7.org/fhir/R5/mapping-language.html"]{FHIR Mapping Language}: a port of
-the official @tt{mapping.g4} with the FHIRPath grammar inlined, so embedded expressions are real
-FHIRPath ASTs; StructureMap emission; a transform engine over typed resources and logical models;
-and a @tt{.map} file as a module. Corpora: the fhir-test-cases structure-mapping suite (6/6
-executable JSON tests, 15/15 parses), the matchbox engine's maps (43/43 parse, 17/17 run) and the
-FHIR mapping-language tutorial (37/37 of the results its reference asserts), and the FHIR R3/R4
-inter-version maps (332/332 parse).
+The @hyperlink["https://hl7.org/fhir/R5/mapping-language.html"]{FHIR Mapping Language} for Racket.
+You write a map from one structure to another in a @tt{.map} (or @tt{.fml}) file; @tt{raco fml}
+checks it against the two StructureDefinitions, runs it over a resource, and emits the StructureMap.
+A map file is a Racket module whose @racket[transform] is a function from source JSON to target JSON.
 
-Part of the @hyperlink["https://github.com/oloveluck/fhir"]{fhir} family; depends on @tt{fhir},
-@tt{fhir-tx} (@tt{translate} over the terminology service) and @tt{fhirpath}.
+Held to the published corpora: the fhir-test-cases structure-mapping suite (6 of 6 executable
+tests), the matchbox engine's maps and the FHIR mapping tutorial (43 of 43 parse, 37 of 37 tutorial
+results), and the FHIR R3/R4 inter-version maps (332 of 332 parse). Part of the
+@hyperlink["https://github.com/oloveluck/fhir"]{fhir} family.
 
 @table-of-contents[]
 
-@section{Install}
+@section{Quick start}
+
+@bold{1. Install.} The packages are not on the Racket package server yet; clone the repositories
+side by side and install from source:
 
 @verbatim{
 raco pkg install --link --auto fhir/fhir fhirpath vcl fhir/fhir-tx fml
-    # from source, with the repos alongside
 }
 
-@section{Writing a map}
-
-A map names its source and target types, then groups of rules. A rule reads source elements
-(@tt{src.item as item where …}), binds them (@tt{as}), and writes targets (@tt{-> tgt.x = …});
-@tt{then} calls another group or opens nested rules; the string at the end names the rule.
+@bold{2. Write a map.} From a QuestionnaireResponse to an Observation:
 
 @verbatim|{#lang fml
 map "http://example.org/StructureMap/bp-intake" = "BpIntake"
@@ -49,23 +46,110 @@ group reading(source item, target c) {
   } "answer";
 }}|
 
-Target values: a source variable (@tt{= s}), a literal, a FHIRPath expression in parentheses
-(@tt{= (item.answer.valueString)}), or a transform: @tt{create('Type')}, @tt{copy}, @tt{reference},
-@tt{cast}, @tt{evaluate}, @tt{truncate}, and the datatype constructors @tt{c} (Coding), @tt{cc}
-(CodeableConcept), @tt{qty} (Quantity), @tt{id}, @tt{cp} (ContactPoint), @tt{append}. A choice
-element on either side (@tt{ans.value}, @tt{tgt.effective}) reads whichever variant is present and
-writes the variant of the value's type. A repeating target appends; @tt{share v} reuses one target
-element across rules.
+@bold{3. Check it, then run it.}
 
-@section{A mapping problem, solved}
+@verbatim{
+$ raco fml check intake.fml
+$ raco fml intake.fml --transform response.json
+{"resourceType": "Observation", "status": "final",
+ "code": {"coding": [{"system": "http://loinc.org", "code": "85354-9", "display": "Blood pressure panel"}]},
+ "subject": {"reference": "Patient/p1"},
+ "component": [{"code": {"coding": [{"system": "http://loinc.org", "code": "8480-6", ...}]},
+                "valueQuantity": {"value": 120, "unit": "mm[Hg]", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}}]}
+}
+
+@tt{check} reports what the two structures decide, on the rule's line: an element neither type has
+(@tt{intake.fml:9:3: fml check error: `subjct` is not an element of QuestionnaireResponse}), a
+value whose type cannot go into the element, a wrong group call, a required target element no rule
+assigns (a warning). A rule that fails at run time (a @tt{check} that does not hold, a @tt{cast}
+that does not convert) is reported the same way.
+
+@section{Writing a map}
+
+A map names its source and target types (@tt{uses}), then groups of rules. A rule reads source
+elements (@tt{src.item as item where …}), binds them (@tt{as}), and writes targets
+(@tt{-> tgt.x = …}); @tt{then} calls another group or opens nested rules; the string at the end
+names the rule. Target values: a variable, a literal, a FHIRPath expression in parentheses, or a
+transform: @tt{create('Type')}, @tt{copy}, @tt{reference}, @tt{cast}, @tt{evaluate},
+@tt{truncate}, @tt{translate}, @tt{uuid}, and the constructors @tt{c} (Coding), @tt{cc}
+(CodeableConcept), @tt{qty} (Quantity), @tt{id}, @tt{cp}, @tt{append}. A choice element on either
+side (@tt{ans.value}, @tt{tgt.effective}) reads whichever variant is present and writes the variant
+of the value's type; a repeating target appends; @tt{share v} reuses one target element across
+rules. The language reference is the
+@hyperlink["https://hl7.org/fhir/R5/mapping-language.html"]{FHIR specification}.
+
+@bold{Logical models.} A @tt{uses} url the FHIR towers do not define (a form of your own design) is
+resolved as a StructureDefinition from @racket[current-data-source] and the packages and registered
+as a type. Give the definitions with @litchar{--structures <file|dir>} on the command line or
+@racket[#:structures] from Racket. In a project of FSH structures, @tt{raco fsh check} does this for
+every @tt{.map} file; the worked project is @tt{fhir-examples/examples/intake-maps}, walked through
+in @secref["intake"].
+
+@section{Using it}
+
+@subsection{Command line}
+
+@tabular[#:style 'boxed #:sep @hspace[2]
+(list (list @tt{raco fml map.fml} "the StructureMap JSON")
+      (list @tt{raco fml map.fml --transform src.json [--structures sds/]} "run the map; print the target")
+      (list @tt{raco fml check map.fml [--structures sds/] [--examples ex/] [--profile sd.json]} "the map against its structures; examples transformed and the results validated")
+      (list @tt{raco fml --parse-corpus dir/} @elem{parse every @tt{.map} under a directory})
+      (list @tt{raco fml --tck} "the vendored corpora, with floors"))]
+
+A StructureMap @tt{.json} is read wherever a @tt{.map} is. @litchar{--format text|json|outcome}
+chooses how an error is reported. Exit codes: 0, 1 on an FML error or a suite regression, 2 on usage.
+
+@subsection{As a module}
+
+@racket[(require "intake.fml")] gives @racket[fml] (the AST), @racket[structuremap] (the
+StructureMap jsexpr) and @racket[transform], the map as a procedure: FHIR JSON (or a typed node) in,
+FHIR JSON out, with @racket[#:structures] for logical models. A parse error is a compile error.
+Requiring the module registers the StructureMap, so @racket[structure-map] and @tt{$transform} find
+it by canonical. @tt{racket intake.fml} prints the StructureMap.
+
+@racketblock[
+(require (only-in "intake.fml" [transform intake->reading])
+         fhir/operation (only-in fhir/conformance/operations ensure-valid))
+(code:comment "map, then validate against a profile")
+(~> response intake->reading (ensure-valid #:profile profile-url))
+]
+
+@subsection{As a value or an operation}
+
+@racket[(structure-map ref)] turns a canonical, a parsed map or a StructureMap resource into a typed
+procedure, found among the maps registered in the process, then @racket[current-data-source], then
+the packages. @tt{StructureMap/$transform} is the same as an operation, with the map as text
+(@tt{srcMap}), a canonical (@tt{source}) or a resource (@tt{sourceMap}).
+
+@racketblock[
+(require fml/registry fml/operations fhir/operation)
+(define to-bp (structure-map "http://example.org/StructureMap/bp-intake"))
+(smap-source to-bp)                                    (code:comment "'QuestionnaireResponse")
+(to-bp response)                                       (code:comment "FHIR JSON in, FHIR JSON out")
+((compose-maps a b) x)                                 (code:comment "b after a")
+(apply-operation "StructureMap/$transform" response #:srcMap fml-text)
+]
+
+@subsection{From Racket}
+
+@racketblock[
+(require fml/parser/parse fml/structuremap fml/transform fml/check fhir/result/result
+         fhir/r5/schemas fhir/serialize/from-json)             (code:comment "the engine needs a tower")
+(define m (ok-value (parse-fml text #:source "intake.fml")))
+(fml->structuremap m)                                           (code:comment "the StructureMap jsexpr")
+(check-map m)                                                   (code:comment "(listof diagnostic)")
+(run-map m (ok-value (from-json response #:lenient? #t)))      (code:comment "typed source -> target jsexpr")
+(structuremap->fml sm)                                          (code:comment "a StructureMap back to the AST")
+]
+
+@section[#:tag "intake"]{A mapping problem, solved}
 
 The problem: a clinic's front desk records blood-pressure readings on an intake form of its own
 design, and the clinic's record keeps them as Observations that must conform to its screening
-profile. Three things, one project (@tt{fhir-examples/examples/intake-maps}): the two structures
-in FSH, the map between them in FML, and an example form.
+profile. One project (@tt{fhir-examples/examples/intake-maps}) holds the two structures in FSH, the
+map between them, and an example form.
 
-@bold{1. The structures.} The form is a logical model, not a FHIR resource; the record is a
-profile of Observation.
+@bold{1. The structures.} The form is a logical model; the record is a profile of Observation.
 
 @verbatim|{Logical: IntakeForm
 Id: IntakeForm
@@ -90,9 +174,8 @@ InstanceOf: IntakeForm
 * systolic = 120
 * diastolic = 80}|
 
-@bold{2. The map.} Its @tt{uses} name the two structures by canonical; the engine resolves the
-logical model from the project and the profile's base type from the tower. Each rule reads one
-form element and writes the Observation element it feeds.
+@bold{2. The map.} Its @tt{uses} name the two structures by canonical; each rule reads one form
+element and writes the Observation element it feeds.
 
 @verbatim|{/// url = 'http://example.org/intake/StructureMap/IntakeToBP'
 /// name = 'IntakeToBP'
@@ -109,178 +192,51 @@ group IntakeToBP(source src : Intake, target tgt : BP) {
                         c.value = qty(v, 'mm[Hg]', 'http://unitsofmeasure.org', 'mm[Hg]') "diastolic";
 }}|
 
-@bold{3. Check before running.} @tt{raco fsh check examples/intake-maps} compiles the structures,
-checks the map against them and transforms the example form, validating the result against the
-profile. A mistake is reported on its line, as the FSH checker reports an instance rule. Misspell
-an element, assign a string where a Quantity goes, or forget a rule for @tt{code}, and the check
-says so before any data moves:
-
-@verbatim|{IntakeToBP.map:11:3: fml check error: `systolc` is not an element of IntakeForm
-  src.systolc as v -> tgt.component as c, c.code = cc(...)
-  ^
-IntakeToBP.map:7:1: fml check warning: Observation.code is required (min 1) but no rule of IntakeToBP assigns it}|
-
-Without a project, the same check is @tt{raco fml check IntakeToBP.map --structures sds/
---examples forms/ --profile ScreeningBP.json}.
-
-@bold{4. Run it.} From the command line, @tt{raco fml IntakeToBP.map --transform intake-1.json
---structures sds/} prints the Observation:
-
-@verbatim|{{"resourceType": "Observation", "status": "final",
- "code": {"coding": [{"system": "http://loinc.org", "code": "85354-9", "display": "Blood pressure panel"}]},
- "subject": {"reference": "Patient/p1"},
- "effectiveDateTime": "2024-03-01T09:00:00Z",
- "component": [{"code": {"coding": [{"system": "http://loinc.org", "code": "8480-6", "display": "Systolic blood pressure"}]},
-                "valueQuantity": {"value": 120, "unit": "mm[Hg]", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}},
-               {"code": {"coding": [{"system": "http://loinc.org", "code": "8462-4", "display": "Diastolic blood pressure"}]},
-                "valueQuantity": {"value": 80, "unit": "mm[Hg]", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}}]}}|
-
-The integers stayed integers inside the quantities, @tt{measured} landed on @tt{effectiveDateTime}
-because the value is a dateTime, and each @tt{component} rule appended an entry.
-
-@bold{5. As a value in a program.} Packed (@tt{raco fsh examples/intake-maps --pack intake.tgz}),
-the project is a package holding both structures and the map, and the map is a typed procedure
-resolved by its canonical:
+@bold{3. Check, run, use.} @tt{raco fsh check examples/intake-maps} compiles the structures, checks
+the map against them and transforms the example form, validating the result against the profile;
+misspell an element or forget the rule for @tt{code} and the check says so on the line. @tt{raco fsh
+examples/intake-maps --pack intake.tgz} packs both structures and the StructureMap into one
+package, from which the map is a typed procedure by canonical:
 
 @racketblock[
-(require fml/registry fhir/sd/sd-index fhir/conformance/validate)
+(require fml/registry fhir/sd/sd-index)
 (parameterize ([current-sd-packages (list "intake.tgz" core)])
   (define to-bp (structure-map "http://example.org/intake/StructureMap/IntakeToBP"))
-  (smap-source to-bp)                          (code:comment "'IntakeForm")
-  (smap-target to-bp)                          (code:comment "'Observation")
-  (define obs (to-bp form))                    (code:comment "the form above, as JSON")
-  (validate-issues obs #:profiles (list screening-bp)))  (code:comment "'()")
+  (to-bp form))                                (code:comment "the Observation")
 ]
 
 Over HTTP, a server generated from that package serves the same map as
-@tt{StructureMap/$transform} with @tt{source} naming the canonical. The test that does all of this
-is @tt{fhir-examples/tests/intake-maps-test.rkt}.
-
-@section{Using it}
-
-@bold{As a module.} @racket[(require "intake.fml")] gives @racket[fml] (the AST),
-@racket[structuremap] (the StructureMap jsexpr) and @racket[transform], the map as a procedure:
-FHIR JSON (or a typed node) in, FHIR JSON out. A parse error is a compile error.
-@tt{racket intake.fml} prints the StructureMap.
-
-@bold{Logical models.} A @tt{uses} url the FHIR towers do not define (a logical model, as in the
-mapping tutorial) is resolved as a StructureDefinition, from @racket[current-data-source] and then
-the packages, and registered as a type; its instances are typed nodes like any other.
-@racket[(transform src #:structures sds)] takes the StructureDefinitions (a list of jsexprs or a
-data source); @litchar{--structures} does the same on the command line. A later definition of the
-same type name (the tutorial's @tt{TLeft}, one per step) replaces the earlier one.
-
-@racketblock[
-(require (only-in "intake.fml" [transform intake->reading])
-         fhir/operation (only-in fhir/conformance/operations ensure-valid))
-(code:comment "map, then validate against a profile")
-(~> form intake->reading (ensure-valid #:profile profile))
-]
-
-@bold{As an operation.} With the map as text, @tt{StructureMap/$transform} runs it; loading
-@racket[fml/operations] registers it.
-
-@racketblock[
-(require fhir/operation fml/operations)
-(apply-operation "StructureMap/$transform" qr #:srcMap fml-text)
-(define transform (operation "StructureMap/$transform"))
-(~> qr (transform #:srcMap fml-text) (ensure-valid))
-]
-
-@bold{From Racket.}
-
-@racketblock[
-(require fml/parser/parse fml/structuremap fml/transform fhir/result/result
-         (code:comment "the engine needs a tower")
-         fhir/r5/schemas fhir/serialize/from-json)
-(define m (ok-value (parse-fml text)))
-(code:comment "the StructureMap jsexpr")
-(fml->structuremap m)
-(code:comment "a typed source node -> the target jsexpr")
-(run-map m (ok-value (from-json qr #:lenient? #t)))
-]
-
-@bold{A map as a value.} The StructureMap resource is the interchange form: @racket[fml->structuremap]
-emits it and @racket[structuremap->fml] reads one back into the AST the engine runs, so a map from a
-package or a data source runs without its FML. @racket[(structure-map ref)] turns a canonical, a
-parsed map or a StructureMap resource into a typed procedure, found the way @tt{fhir/operation}
-finds an OperationDefinition: maps registered in the process (a required @hash-lang[] @tt{fml}
-module registers its own), StructureMaps in @racket[current-data-source], then the packages.
-
-@racketblock[
-(require fml/registry)
-(define to-bp (structure-map "http://example.org/intake/StructureMap/IntakeToBP"))
-(smap-source to-bp)   (code:comment "'IntakeForm")
-(smap-target to-bp)   (code:comment "'Observation")
-(to-bp form)          (code:comment "FHIR JSON in, FHIR JSON out")
-((compose-maps a b) x) (code:comment "b after a, when a's target structure is b's source")
-]
-
-@tt{imports} resolve the same way: a group called by name is found in the map or any map it imports.
-@tt{$transform} takes @tt{source} (a canonical) and @tt{sourceMap} (a StructureMap) as well as
-@tt{srcMap}.
-
-@bold{Checking a map against its structures.} @tt{raco fml check} (and @racket[check-map]) reports
-what the two StructureDefinitions decide, positioned in the FML: an element the source or target
-type lacks, a value whose type cannot go into the element, a group call with the wrong arity or no
-such group, a required target element the entry group never assigns (a warning). With
-@litchar{--examples}, each example is transformed and the result validated against its base type and
-the @litchar{--profile}s; an issue is traced to the rule that wrote the element. Anything the
-structures do not decide is left alone. In a project of FSH structures the same check runs under
-@tt{raco fsh check} (the fsh package loads @tt{fml/project} on demand).
-
-@bold{Command line.}
-
-@verbatim{
-raco fml intake.fml                          the StructureMap JSON (a StructureMap .json is read wherever a .map is)
-raco fml intake.fml --transform form.json    run the map over an R5 resource; print the target
-    [--structures <file|dir>]                the StructureDefinitions of the map's logical models
-raco fml check intake.fml [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...
-                                             the map against its structures; examples transformed and validated
-raco fml --parse-corpus <dir>                parse every .map under a directory, list the failures
-raco fml --tck                               the vendored corpora, with floors
-}
-
-@litchar{--format text|json|outcome} chooses how an error is reported. Exit codes: 0, 1 on an FML error or
-a suite regression, 2 on usage.
+@tt{StructureMap/$transform}. The test that does all of this is
+@tt{fhir-examples/tests/intake-maps-test.rkt}.
 
 @section{What the engine does}
 
-A rule runs for every combination of its sources' matches (each source's elements, @tt{where}
-filtered with the alias bound to the candidate, in its list mode @tt{first}, @tt{last},
-@tt{not_first}, @tt{not_last}, @tt{only_one}; @tt{check} must hold or the rule fails naming
-itself; @tt{log} goes to @racket[current-fml-log]), then its targets in order, the dependent group
-calls and the nested rules. A target without a transform creates its element; with one source and
-one target the source value is carried over: a primitive is copied and coerced to the element's
-type (@racket["12345"] into an integer element is @racket[12345]), a complex value runs the
-@tt{types}/@tt{type+} group whose parameter types match, or is copied whole. @tt{extends} runs the
-parent group first. Transforms: literals, @tt{(fhirpath)} over the rule's variables, @tt{create}
-(a resource type gets its @tt{resourceType}), @tt{copy}, @tt{reference} (@tt{Type/id} of a built
-target), @tt{cast} (an error when the value does not convert), @tt{evaluate}, @tt{truncate},
-@tt{translate} (an embedded @tt{conceptmap} block, or a ConceptMap the terminology service can
-see), @tt{uuid}, and the constructors @tt{c}, @tt{cc}, @tt{qty}, @tt{id}, @tt{cp}, @tt{append}.
-A target may be a bare invocation (@tt{evaluate(result, resolve()) as obs}) whose value becomes a
-source for dependent calls. Errors name the rule and, for an unknown transform or group, what is
+A rule runs for every combination of its sources' matches (@tt{where} filtered, in its list mode
+@tt{first}, @tt{last}, @tt{not_first}, @tt{not_last}, @tt{only_one}; @tt{check} must hold or the
+rule fails naming itself; @tt{log} goes to @racket[current-fml-log]), then its targets in order,
+the dependent group calls and the nested rules. A target without a transform creates its element;
+with one source and one target the value is carried over: a primitive is copied and coerced to the
+element's type (@racket["12345"] into an integer element is @racket[12345]), a complex value runs
+the @tt{types}/@tt{type+} group whose parameter types match, or is copied whole. @tt{extends} runs
+the parent group first. @tt{translate} uses an embedded @tt{conceptmap} block or a ConceptMap the
+terminology service can see. Errors name the rule and, for an unknown transform or group, what is
 supported.
 
 @section{Limits}
 
 @itemlist[
 @item{@bold{Transforms.} @tt{escape}, @tt{dateOp} and @tt{pointer} raise @tt{unsupported
-transform}. Target list modes other than @tt{share} are accepted and ignored (the tutorial's
-expected results agree).}
-@item{@bold{Declarations.} @tt{imports} resolve by canonical (registered maps, the data source,
-the packages); one that resolves nowhere is skipped. @tt{let} constants, source types,
-cardinalities and @tt{default} are parsed and dropped; @tt{unmapped for} in a @tt{conceptmap} is
-parsed only. In embedded FHIRPath the @tt{as} operator is read as the target alias; use @tt{.as()}.}
-@item{@bold{Against the reference.} Every tutorial result the reference engine's own tests assert
-is reproduced. Two result files in the corpus are not among them: one for a map the reference never
-runs (its comment says @tt{isInteger()} is not a FHIRPath function), and one where the reference
-expects the run to throw (@tt{only_one} over two elements, which this engine also makes an error);
-@tt{tests/matchbox-harness.rkt} names both with the evidence.}
+transform}. Target list modes other than @tt{share} are accepted and ignored.}
+@item{@bold{Declarations.} @tt{imports} resolve by canonical (registered maps, the data source, the
+packages); one that resolves nowhere is skipped. @tt{let} constants, source types, cardinalities and
+@tt{default} are parsed and dropped. In embedded FHIRPath the @tt{as} operator is read as the
+target alias; use @tt{.as()}.}
+@item{@bold{Against the reference.} Every tutorial result the reference engine's own tests assert is
+reproduced; two result files in the corpus are not among them (one for a map the reference never
+runs, one where it expects the run to fail, as this engine does), named in
+@tt{tests/matchbox-harness.rkt}.}
 @item{@bold{Versions and formats.} The executor targets R5 (sources from other versions are read
-leniently); @tt{$transform} runs FML text only. The suite's four CDA tests (XML output) and the one
-StructureMap-as-JSON input are skipped.}]
+leniently). The suite's four CDA tests (XML output) are skipped.}]
 
 @section{Reference}
 
