@@ -110,3 +110,9 @@ A `#lang fml` module registers its StructureMap with `fhir/registry` (the module
 registry), and `resolve-structure-map` looks there after the data source; a rule that fails at run time
 (`rule-error`: check, only_one, cast, an unknown group, an unbound variable) raises `exn:fail:diagnostic`
 positioned at the rule, which `$transform` returns as an OperationOutcome carrying the line.
+
+**Editor and agent support** (`support.rkt`, through `fhir/lang/support`): diagnostics (parse, then
+`check-map`), the maps beside a document as its project, the declarations as an outline (the map with
+its url as id, uses aliases, imports, concept maps, groups), hover, go to definition (an `imports`
+url leads to the map that declares it), completion of declared names and keywords; `$transform` is
+already an operation, so no tool. The LSP and MCP hubs load it by collection name.
