@@ -116,3 +116,8 @@ positioned at the rule, which `$transform` returns as an OperationOutcome carryi
 its url as id, uses aliases, imports, concept maps, groups), hover, go to definition (an `imports`
 url leads to the map that declares it), completion of declared names and keywords; `$transform` is
 already an operation, so no tool. The LSP and MCP hubs load it by collection name.
+
+**Workspace support** (`workspace.rkt`): artifacts = each map's StructureMap with `check-map`'s
+findings; `run` = every data-source resource of the map's source type (or `over`) transformed and
+validated by $validate when fhir-validation is installed; `explain` = one source's result and
+`check-map/examples`'s problems traced to rules, against the workspace's profiles.
