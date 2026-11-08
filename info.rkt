@@ -2,7 +2,7 @@
 
 (define collection "fml")
 (define version "0.3")
-(define pkg-desc "FHIR Mapping Language for Racket: brag port of the official mapping grammar with real FHIRPath ASTs, StructureMap emission, a transform engine, #lang fml and raco fml")
+(define pkg-desc "FHIR Mapping Language: a port of the official mapping grammar with real FHIRPath ASTs, StructureMap emission, a transform engine and a map checker; the fml command-line tool and #lang fml")
 (define pkg-authors '(oloveluck))
 (define license 'MIT)
 (define deps '("base" "fhir" "fhir-tx" "fhirpath" "brag-lib" "br-parser-tools-lib"))

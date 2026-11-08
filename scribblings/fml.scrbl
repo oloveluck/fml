@@ -2,9 +2,9 @@
 @(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/transform fml/operations
                      fml/registry fml/check fml/project))
 
-@title{fml: the FHIR Mapping Language for Racket}
+@title{fml: the FHIR Mapping Language}
 
-The @hyperlink["https://hl7.org/fhir/R5/mapping-language.html"]{FHIR Mapping Language} for Racket.
+The @hyperlink["https://hl7.org/fhir/R5/mapping-language.html"]{FHIR Mapping Language}, checked and run.
 You write a map from one structure to another in a @tt{.map} (or @tt{.fml}) file; @tt{raco fml}
 checks it against the two StructureDefinitions, runs it over a resource, and emits the StructureMap.
 A map file is a Racket module whose @racket[transform] is a function from source JSON to target JSON.
