@@ -114,8 +114,8 @@ positioned at the rule, which `$transform` returns as an OperationOutcome carryi
 **Editor and agent support** (`support.rkt`, through `fhir/lang/support`): diagnostics (parse, then
 `check-map`), the maps beside a document as its project, the declarations as an outline (the map with
 its url as id, uses aliases, imports, concept maps, groups), hover, go to definition (an `imports`
-url leads to the map that declares it), completion of declared names and keywords; `$transform` is
-already an operation, so no tool. The LSP and MCP hubs load it by collection name.
+url leads to the map that declares it), completion of declared names and keywords. The language
+server loads it by collection name.
 
 **Workspace support** (`workspace.rkt`): artifacts = each map's StructureMap with `check-map`'s
 findings; `run` = every data-source resource of the map's source type (or `over`) transformed and

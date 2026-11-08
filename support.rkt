@@ -1,10 +1,10 @@
 #lang racket/base
 
-;;; support.rkt — what FML offers the family's editor and agent hubs (fhir/lang/support): the
+;;; support.rkt — what FML offers the family's editor hub (fhir/lang/support): the
 ;;; diagnostics of a map (parse, then the check against its structures), the maps beside it, its
 ;;; declarations as an outline (the map, its uses aliases, imports, concept maps, groups), hover and go
 ;;; to definition (an imported url leads to the map that declares it), and completion of declared
-;;; names and keywords. $transform is already an operation (fml/operations), so no tool is added here.
+;;; names and keywords. What an agent runs is workspace.rkt.
 
 (require racket/contract racket/string racket/list
          fhir/lang/support fhir/lang/declared
@@ -60,7 +60,7 @@
   (and e (declaration-hover e ((project-text-of pr) (entity-file e)) "fml")))
 (define (completion pr text pos) (prefix-completions (project-entities pr) keywords item-kind text pos))
 
-(define support (lang-support "fml" diagnose project-files entities hover definition completion '()))
+(define support (lang-support "fml" diagnose project-files entities hover definition completion))
 
 (module+ test
   (require rackunit)
