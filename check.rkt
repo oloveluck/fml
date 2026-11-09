@@ -18,7 +18,8 @@
 ;;; `check-map/examples` runs the map over example sources and validates each result (fhir-validation,
 ;;; loaded on demand); a validation issue is traced to the rule that wrote the element.
 
-(require racket/contract racket/list racket/string racket/match
+(require (only-in fhir/suggest did-you-mean)
+         racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
          (only-in "transform.rkt" uses-types map-imports run-map)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
@@ -86,6 +87,13 @@
     (define-values (sc* ds*) (bind c x sc))
     (values sc* (append ds ds*))))
 
+;; element-suggestion : name Ty -> string   " (did you mean `name`?)" from the type's elements, or ""
+(define (element-suggestion missing ty)
+  (define specs (and (symbol? ty) (with-handlers ([exn:fail? (lambda (_) #f)]) (full-field-specs ty))))
+  (if (and (string? missing) specs)
+      (did-you-mean missing (for/list ([f (in-list specs)] #:when (field-spec? f)) (symbol->string (fs-name f))))
+      ""))
+
 ;; a source clause: its context must be in scope, its element on the context's type; `as` binds
 (define (bind-source c s sc)
   (define b (hash-ref sc (fml-source-context s) #f))
@@ -96,7 +104,7 @@
     [else
      (define-values (missing ty) (path-type/ty (binding-ty b) (fml-source-element s)))
      (values (bound (and (not missing) ty))
-             (findings-if missing c s "`~a` is not an element of ~a" missing (ty->string ty)))]))
+             (findings-if missing c s "`~a` is not an element of ~a~a" missing (ty->string ty) (element-suggestion missing ty)))]))
 
 ;; a target clause: a target context in scope, the element on its type, a value that fits; `as` binds
 (define (bind-target c t sc)
@@ -113,7 +121,7 @@
        (if (fml-target-element t) (path-type/ty (binding-ty b) (fml-target-element t)) (values #f (binding-ty b))))
      (define elem-ty (and (not missing) ty))
      (values (bound (created-type c t elem-ty))
-             (append (findings-if missing c t "`~a` is not an element of ~a" missing (ty->string ty))
+             (append (findings-if missing c t "`~a` is not an element of ~a~a" missing (ty->string ty) (element-suggestion missing ty))
                      (check-assignment c t elem-ty sc)))]))
 
 ;; the type a target variable gets: create('T') names it; otherwise the element's
