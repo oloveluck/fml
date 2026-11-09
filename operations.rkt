@@ -70,6 +70,9 @@
   (check-equal? (hash-ref p 'gender) "female")
   (check-exn #rx"no StructureMap" (lambda () ($transform qr #:source "http://example.org/map")))
   (check-exn #rx"does not parse" (lambda () ($transform qr #:srcMap "map oops")))
+  ;; a source of another type than the entry group takes is refused, not read
+  (check-exn #rx"the source is of type Observation, but group"
+             (lambda () ($transform (hasheq 'resourceType "Observation" 'status "final" 'code (hasheq 'text "x")) #:srcMap fml)))
   ;; the same map as a StructureMap resource, and by canonical once registered
   (require (only-in fml/parser/parse parse-fml) (only-in fml/structuremap fml->structuremap)
            (only-in fml/transform register-structure-map!) (only-in fhir/result/result ok-value))

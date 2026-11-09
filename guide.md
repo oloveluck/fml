@@ -125,5 +125,6 @@ instance of a logical model names its type in `resourceType` (`{"resourceType": 
 - `unknown transform`: the error lists the supported ones; `escape`, `dateOp` and `pointer` are not
   implemented.
 - `as` inside embedded FHIRPath: it is read as the target alias. Use `.as(Type)` there.
-- A map is applied to a source of another type: the engine does not stop it; the rules read what
-  that source has. Check the source's `resourceType` first.
+- `the source is of type Observation, but group BpIntake takes src : QuestionnaireResponse`: the
+  map's entry group declares its source's type, and the resource given is another (a type derived
+  from the declared one is accepted: a group taking `Resource` takes any resource).

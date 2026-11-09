@@ -251,9 +251,7 @@ reproduced; two result files in the corpus are not among them (one for a map the
 runs, one where it expects the run to fail, as this engine does), named in
 @tt{tests/matchbox-harness.rkt}.}
 @item{@bold{Versions and formats.} The executor targets R5 (sources from other versions are read
-leniently). The suite's four CDA tests (XML output) are skipped.}
-@item{@bold{Source types.} A map does not check its source's type: a map from Observation applied to
-a QuestionnaireResponse runs and reads whatever its rules find there.}]
+leniently). The suite's four CDA tests (XML output) are skipped.}]
 
 @section{Reference}
 
@@ -297,7 +295,8 @@ Targets are shaped by the registered type schema (a repeating element appends, a
 the key of the value's type, a primitive element coerces what is assigned to it). A failure while
 running a rule (a @tt{check} that does not hold, @tt{only_one} over several elements, a @tt{cast}
 that cannot convert, an unknown group) raises @tt{exn:fail:diagnostic} positioned at the rule, as a
-parse error is.}
+parse error is. A source that is not of the first group's source type (nor of a type derived from
+it) is refused the same way, positioned at the group, before any rule runs.}
 
 @defproc[(uses-types [m fml-map?]) hash?]{
 The map's @tt{uses} resolved to type symbols, keyed by alias and type name; a structure the towers

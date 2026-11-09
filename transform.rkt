@@ -33,6 +33,7 @@
          "schema.rkt"
          (only-in fhir/model/schema type-schema-parent resource-parent?)
          (only-in fhir/model/registry type-registered? type-schema-of)
+         (only-in fhirpath/types fhir-ancestors)
          (only-in fhir/sd/logical register-structure-definition! resolve-structure-definition/data)
          (only-in fhir/sd/sd-index resolve-canonical-raw)
          (only-in fhir/registry registered-resource)
@@ -212,11 +213,26 @@
                      (for/fold ([h h]) ([(k v) (in-hash (uses-types im))]) (hash-set h k v)))
                  maps))
   (define entry (car (fml-map-groups m)))
+  (check-source-type! c entry src)
   (define target-sym (target-type-of c entry))
   (define root (make-root-slot (hash 'resourceType (symbol->string target-sym)) target-sym))
   (define sc (scope (bind-params entry src root) (make-hash)))
   (run-group c entry sc)
   (finalize ((tslot-get root))))
+
+;; check-source-type! : ctx group source -> void   the source is of the entry group's source type
+;; (or a type derived from it); an error positioned at the group when it is not. Nothing is checked
+;; when the parameter declares no type the map knows, or the source is not a typed node.
+(define (check-source-type! c g src)
+  (define sparam (findf (lambda (p) (eq? (fml-param-mode p) 'source)) (fml-group-params g)))
+  (define declared (and sparam (type-sym c (fml-param-type sparam))))
+  (define actual (and (fhir? src) (fhir-type src)))
+  (when (and declared actual (not (memq declared (fhir-ancestors actual))))
+    (raise-diagnostic
+     (diagnostic 'fml 'transform 'error
+                 (format "the source is of type ~a, but group ~a takes ~a : ~a"
+                         actual (fml-group-name g) (fml-param-name sparam) declared)
+                 (or (attached-loc g) (loc #f #f #f #f #f))))))
 
 ;; the entry group's target type: its target parameter's type, else the first `uses … as target`
 (define (target-type-of c g)

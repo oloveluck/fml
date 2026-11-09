@@ -63,6 +63,6 @@
   (check-equal? (map diagnostic-message no-code) '("Observation.code is required (min 1) but no rule of BpIntake assigns it"))
   (check-equal? (map diagnostic-severity no-code) '(warning)))
 
-(test-case "a map applied to a source of another type is not stopped, as the text warns"
-  (define qr (string->jsexpr (car (blocks "json"))))
-  (check-equal? (hash-ref (transform (map-named "BpIntake") (hash-set qr 'resourceType "QuestionnaireResponse")) 'resourceType) "Observation"))
+(test-case "a map applied to a source of another type is refused, as the text quotes"
+  (check-exn (regexp (regexp-quote "the source is of type Observation, but group BpIntake takes src : QuestionnaireResponse"))
+             (lambda () (transform (map-named "BpIntake") (hasheq 'resourceType "Observation" 'status "final" 'code (hasheq 'text "x"))))))

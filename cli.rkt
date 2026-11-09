@@ -22,7 +22,8 @@
          (only-in fml/check check-map check-map/examples)
          (only-in fhir/diagnostic diagnostic-severity)
          (only-in "error.rkt" fml-error-string fml-error-diagnostic fml-error-message)
-         (only-in fhir/diagnostic diagnostic diagnostic-loc loc emit-diagnostics format-flag)
+         (only-in fhir/diagnostic diagnostic diagnostic-loc loc loc-source emit-diagnostics format-flag
+                  exn:fail:diagnostic? exn:fail:diagnostic-diagnostic)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
@@ -71,7 +72,13 @@
     (uses-types m)
     (define r (from-json (call-with-input-file src-file read-json) #:lenient? #t))
     (unless (ok? r) (eprintf "~a: ~a\n" src-file (validation-error-message (err-error r))) (exit 1))
-    (displayln (jsexpr->string (run-map m (ok-value r))))))
+    ;; a run-time error (a check, a source of the wrong type, ...) is a diagnostic at its rule or group
+    (with-handlers ([exn:fail:diagnostic?
+                     (lambda (e)
+                       (define d (exn:fail:diagnostic-diagnostic e))
+                       (define l (diagnostic-loc d))
+                       (report d (if (and l (equal? (loc-source l) file)) (file->string file) "")))])
+      (displayln (jsexpr->string (run-map m (ok-value r)))))))
 
 ;; check-file : map-file options -> void   the static findings, then the examples validated; exit 1 on an error
 (define (check-file file opts)

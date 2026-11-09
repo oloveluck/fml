@@ -130,9 +130,13 @@ models, common problems — provided by `fml/workspace` as `guide` (fhir-mcp's `
 example over the sources the text describes and compares the results it states, and checks the
 quoted findings (`subjct`; the unassigned `Observation.code` warning) word for word.
 `.claude/skills/fml/SKILL.md` is the workflow without MCP (every command in it was run).
-`scribblings/fml.scrbl` is the manual (now current: fml/workspace, the StructureMap round trip, the
-source-type limit; `smap?` was referenced but undocumented); `tests/docs-test.rkt` renders it and
-fails on a broken reference to its own sections or `fml/…` bindings. Found writing them, not fixed: a
-map does not check its source's type (`$transform` ran the Observation map over a
-QuestionnaireResponse) — documented as a limit in the guide and the manual.
+`scribblings/fml.scrbl` is the manual (now current: fml/workspace, the StructureMap round trip;
+`smap?` was referenced but undocumented); `tests/docs-test.rkt` renders it and fails on a broken
+reference to its own sections or `fml/…` bindings. Found writing them, then fixed: a map did not
+check its source's type (`$transform` ran the Observation map over a QuestionnaireResponse).
+`run-map` now refuses a source that is not of the entry group's declared source type or a type
+derived from it (`check-source-type!`, through fhirpath/types' `fhir-ancestors`; nothing is checked
+when the group declares no type the map knows), a diagnostic at the group; `$transform` returns it as
+an OperationOutcome and `raco fml --transform` prints it positioned (it printed a stack trace for
+any run-time rule error). Every corpus floor holds.
 

@@ -66,8 +66,9 @@ A map starting with `#lang fml` is a module; requiring it registers its Structur
 `fml/check` (`check-map`, `check-map/examples`), `fml/transform` (`run-map` over a typed node; load
 `fhir/r5/schemas` first, and call `uses-types` before reading a logical-model source).
 
-A map does not check its source's type: an Observation map applied to a QuestionnaireResponse runs
-and reads whatever the rules find. Check `resourceType` before transforming.
+The entry group's source type is checked: an Observation given to a map whose group takes a
+QuestionnaireResponse is an error at the group (`the source is of type Observation, but group
+BpIntake takes src : QuestionnaireResponse`), exit 1.
 
 ## Working on the engine itself
 `CLAUDE.md` is the architecture. `raco test .` runs everything; `raco fml --tck` runs the corpora
