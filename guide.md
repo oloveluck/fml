@@ -69,7 +69,7 @@ coded `8480-6` whose `valueQuantity` is 120 mm[Hg].
 
 ## Checking a map
 The check holds a map against its two structures and reports, on the rule's line:
-- an element the type does not have (`` `subjct` is not an element of QuestionnaireResponse``);
+- an element the type does not have (`` `subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)``);
 - a value whose type cannot go into the element;
 - a group call with the wrong number of arguments, or to a group that does not exist;
 - a required target element no rule assigns (a warning: `Observation.code is required (min 1) but

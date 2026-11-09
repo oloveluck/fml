@@ -16,7 +16,7 @@ example, what the checker reports, and the common problems (that guide is what f
    element a type does not have, a value that cannot go into an element, a wrong group call, and (a
    warning) a required target element no rule assigns:
    ```
-   bad.fml:8:3: fml check error: `subjct` is not an element of QuestionnaireResponse
+   bad.fml:8:3: fml check error: `subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)
    nocode.map:5:1: fml check warning: Observation.code is required (min 1) but no rule of main assigns it
    ```
    Exit 1 on an error, 0 with only warnings. `--format json` puts the findings on stdout as JSON

@@ -56,7 +56,7 @@
   (define worked (map-named "BpIntake"))
   ;; an element the type does not have
   (define misspelt (check-map (parse (string-replace worked "src.subject as s" "src.subjct as s"))))
-  (check-equal? (map diagnostic-message misspelt) '("`subjct` is not an element of QuestionnaireResponse"))
+  (check-equal? (map diagnostic-message misspelt) '("`subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)"))
   (check-equal? (map diagnostic-severity misspelt) '(error))
   ;; a required target element no rule assigns: a warning
   (define no-code (check-map (parse (string-replace worked "  src -> tgt.code = cc('http://loinc.org', '85354-9', 'Blood pressure panel') \"code\";\n" ""))))

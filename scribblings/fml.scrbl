@@ -60,7 +60,7 @@ $ raco fml intake.fml --transform response.json
 }
 
 @tt{check} reports what the two structures decide, on the rule's line: an element neither type has
-(@tt{intake.fml:9:3: fml check error: `subjct` is not an element of QuestionnaireResponse}), a
+(@tt{intake.fml:9:3: fml check error: `subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)}), a
 value whose type cannot go into the element, a wrong group call, a required target element no rule
 assigns (a warning). A rule that fails at run time (a @tt{check} that does not hold, a @tt{cast}
 that does not convert) is reported the same way.
