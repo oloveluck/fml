@@ -52,6 +52,13 @@
   (check-equal? (hash-ref (hash-ref comp 'valueQuantity) 'value) 120)
   (check-equal? (hash-ref (hash-ref comp 'valueQuantity) 'unit) "mm[Hg]"))
 
+(test-case "the name recipe splits the name as the text states"
+  (define qr (hasheq 'resourceType "QuestionnaireResponse" 'status "completed"
+                     'item (list (hasheq 'linkId "name" 'answer (list (hasheq 'valueString "Ann Marie Ng"))))))
+  (check-equal? (hash-ref (transform (map-named "NameSplit") qr) 'name) (list (hash 'family "Ng" 'given '("Ann"))))
+  (define middle (string-replace (map-named "NameSplit") "\"parts\";" "\"parts\";\n      a.value as full -> n.given = (full.split(' ')[1]) \"middle\";"))
+  (check-equal? (hash-ref (car (hash-ref (transform middle qr) 'name)) 'given) '("Ann" "Marie")))
+
 (test-case "the check reports the problems the text quotes"
   (define worked (map-named "BpIntake"))
   ;; an element the type does not have

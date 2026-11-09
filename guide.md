@@ -67,6 +67,27 @@ It checks clean. Over a response with `subject` `Patient/p1` and a `systolic` it
 `valueInteger: 120`, the Observation is `final`, coded `85354-9`, for `Patient/p1`, with one component
 coded `8480-6` whose `valueQuantity` is 120 mm[Hg].
 
+## Recipe: one text into several elements
+A form's free-text name into `family` and `given`: FHIRPath in parentheses computes each part
+(`split`, `first`, `last`, `replaceMatches`, `substring`):
+```fml
+map "http://example.org/StructureMap/name-split" = "NameSplit"
+uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
+uses "http://hl7.org/fhir/StructureDefinition/Patient" as target
+
+group main(source src : QuestionnaireResponse, target tgt : Patient) {
+  src.item as item where linkId = 'name' then {
+    item.answer as a -> tgt.name as n then {
+      a.value as full -> n.family = (full.split(' ').last()),
+                         n.given = (full.split(' ').first()) "parts";
+    } "name";
+  };
+}
+```
+An answer `valueString: "Ann Marie Ng"` gives `"name": [{"family": "Ng", "given": ["Ann"]}]`. An
+assignment writes one value: a FHIRPath giving several (`split(' ').take(2)`) writes its first, so a
+middle name is a rule of its own (`n.given = (full.split(' ')[1])`).
+
 ## Checking a map
 The check holds a map against its two structures and reports, on the rule's line:
 - an element the type does not have (`` `subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)``);
