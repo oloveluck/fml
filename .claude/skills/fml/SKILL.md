@@ -52,6 +52,10 @@ A map starting with `#lang fml` is a module; requiring it registers its Structur
 (transform (call-with-input-file "qr.json" read-json))    ; '#hash((gender . "female") ...)
 (hash-ref structuremap 'url)
 ```
+The module provides `transform` (FHIR JSON or a typed node in, FHIR JSON out; `#:structures` gives
+logical models), `structuremap` (the StructureMap resource) and `fml` (the parsed map); require it
+with `only-in` beside other languages' modules. Compiling it (`raco make`) checks the map against its
+structures: a misspelt element fails the build at its rule, as `raco fml check` reports it.
 `racket qr2pat.map` prints the StructureMap. A map by canonical, and the FHIR operation:
 ```racket
 (require fml/registry fml/operations fhir/operation (only-in fhir/conformance/operations ensure-valid))

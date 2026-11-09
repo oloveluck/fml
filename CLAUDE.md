@@ -25,7 +25,7 @@ construction up to the root — whose shape is **registry-driven** (`full-field-
 arrays, max-1 sets scalars, and a `create('T')` on a `value[x]` element picks the `value<T>` key).
 `share v` reuses one target element across rules. FML's FHIRPath dialect bridges: rule variables
 become `%externals` via a chain-head AST rewrite, and element-model `.value` steps retry stripped.
-Conformance (`raco fhir fml-tck` → `fml/tests/run.rkt`): the vendored
+Conformance (`raco fml --tck` → `fml/tests/run.rkt`): the vendored
 `fhir-test-cases/r5/structure-mapping` suite — **6/6 executable JSON tests, 15/15 `.map` parses**;
 the 4 CDA/XML-output tests + the one StructureMap-as-JSON input are skipped (XML is out of scope
 repo-wide, documented in the vendor SOURCE.txt).
@@ -140,3 +140,7 @@ when the group declares no type the map knows), a diagnostic at the group; `$tra
 an OperationOutcome and `raco fml --transform` prints it positioned (it printed a stack trace for
 any run-time rule error). Every corpus floor holds.
 
+
+**Checked when it compiles** (2026-11-09): the `#lang fml` reader runs `check-map` on the parsed map
+(the R5 types when no FHIR version is registered yet): an error-level finding fails `raco make` at its
+rule. A new user's map writing `tgt.gendr` compiled and silently produced `{"gendr": …}`.
