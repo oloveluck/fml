@@ -120,4 +120,19 @@ server loads it by collection name.
 **Workspace support** (`workspace.rkt`): artifacts = each map's StructureMap with `check-map`'s
 findings; `run` = every data-source resource of the map's source type (or `over`) transformed and
 validated by $validate when fhir-validation is installed; `explain` = one source's result and
-`check-map/examples`'s problems traced to rules, against the workspace's profiles.
+`check-map/examples`'s problems traced to rules, against the workspace's profiles. It also provides `guide` (below).
+
+**Documentation for users and agents** (2026-11-08; the family's pattern, cql first — see the main
+repo's CLAUDE.md). `guide.md` is the language for agents — cheat sheet, worked example, what the
+checker reports, running it (command line, module, by canonical/operation, workspace), logical
+models, common problems — provided by `fml/workspace` as `guide` (fhir-mcp's `learn://fml`).
+`tests/guide-test.rkt` parses and checks every ```fml block, runs the cheat sheet and the worked
+example over the sources the text describes and compares the results it states, and checks the
+quoted findings (`subjct`; the unassigned `Observation.code` warning) word for word.
+`.claude/skills/fml/SKILL.md` is the workflow without MCP (every command in it was run).
+`scribblings/fml.scrbl` is the manual (now current: fml/workspace, the StructureMap round trip, the
+source-type limit; `smap?` was referenced but undocumented); `tests/docs-test.rkt` renders it and
+fails on a broken reference to its own sections or `fml/…` bindings. Found writing them, not fixed: a
+map does not check its source's type (`$transform` ran the Observation map over a
+QuestionnaireResponse) — documented as a limit in the guide and the manual.
+

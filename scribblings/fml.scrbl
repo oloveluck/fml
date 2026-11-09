@@ -1,6 +1,6 @@
 #lang scribble/manual
 @(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/transform fml/operations
-                     fml/registry fml/check fml/project))
+                     fml/registry fml/check fml/project fml/workspace))
 
 @title{fml: the FHIR Mapping Language}
 
@@ -11,7 +11,8 @@ A map file is a Racket module whose @racket[transform] is a function from source
 
 Held to the published corpora: the fhir-test-cases structure-mapping suite (6 of 6 executable
 tests), the matchbox engine's maps and the FHIR mapping tutorial (43 of 43 parse, 37 of 37 tutorial
-results), and the FHIR R3/R4 inter-version maps (332 of 332 parse). Part of the
+results, the same 37 when run from the StructureMaps this package emits), every corpus map through
+its StructureMap and back (58 of 58), and the FHIR R3/R4 inter-version maps (332 of 332 parse). Part of the
 @hyperlink["https://github.com/oloveluck/fhir"]{fhir} family.
 
 @table-of-contents[]
@@ -224,11 +225,17 @@ supported.
 
 @section{In an editor, for an agent}
 
-@tt{fml/support} is what the family's language server (fhir-lsp) and MCP server (fhir-mcp) load for
-FML: a map's diagnostics (parse, then the check against its structures), the maps beside it as its
-project, the declarations as an outline, hover, go to definition (an @tt{imports} url leads to the
-map that declares it), and completion of declared names and keywords. It is a @tt{fhir/lang/support}
-value; @tt{$transform} is already an operation, so no tool is added.
+@tt{fml/support} is what the family's language server (fhir-lsp) loads for FML: a map's diagnostics
+(parse, then the check against its structures), the maps beside it as its project, the declarations
+as an outline, hover, go to definition (an @tt{imports} url leads to the map that declares it), and
+completion of declared names and keywords. It is a @tt{fhir/lang/support} value.
+
+@tt{fml/workspace} is what fhir-mcp runs for an agent: each map as its StructureMap with the
+checker's findings; @tt{run}, every data-source resource of the map's source type transformed and
+validated; @tt{explain}, one source's result with each problem traced to the rule that wrote the
+element. It also provides the repository's @tt{guide.md} as @racket[guide], which fhir-mcp serves
+as @tt{learn://fml}. Without MCP, the repository's Claude skill (@tt{.claude/skills/fml}) gives an
+agent the same workflow with the command line and the Racket API.
 
 @section{Limits}
 
@@ -244,7 +251,9 @@ reproduced; two result files in the corpus are not among them (one for a map the
 runs, one where it expects the run to fail, as this engine does), named in
 @tt{tests/matchbox-harness.rkt}.}
 @item{@bold{Versions and formats.} The executor targets R5 (sources from other versions are read
-leniently). The suite's four CDA tests (XML output) are skipped.}]
+leniently). The suite's four CDA tests (XML output) are skipped.}
+@item{@bold{Source types.} A map does not check its source's type: a map from Observation applied to
+a QuestionnaireResponse runs and reads whatever its rules find there.}]
 
 @section{Reference}
 
@@ -311,6 +320,7 @@ Registered maps, then StructureMaps in @racket[current-data-source], then the pa
 A map as a typed procedure: by canonical (resolved as @racket[resolve-structure-map] does), a parsed
 map, or a StructureMap resource. @racket[structures] are the StructureDefinitions of its logical
 models. Applying it: @racket[(m src)], FHIR JSON or a typed node in, FHIR JSON out.}
+@defproc[(smap? [v any/c]) boolean?]{A map as a procedure.}
 @defproc[(smap-source [m smap?]) (or/c symbol? #f)]{The entry group's source structure type.}
 @defproc[(smap-target [m smap?]) (or/c symbol? #f)]{Its target structure type.}
 @defproc[(smap-ast [m smap?]) fml-map?]{The AST.}
@@ -350,3 +360,10 @@ tower; @tt{sourceMap} is a StructureMap resource and @tt{source} a canonical (re
 data source, the registry, the packages). A rule that fails at run time comes back as an
 OperationOutcome whose issue carries the rule's file and line (the standard
 @tt{operationoutcome-issue-line} extensions).}
+
+@subsection[#:style 'unnumbered]{@tt{fml/workspace}}
+@defmodule[fml/workspace]
+
+@defthing[workspace-support any/c]{The @tt{fhir/lang/workspace} support fhir-mcp loads for FML.}
+@defthing[guide string?]{The repository's @tt{guide.md}: the language for agents (fhir-mcp's
+@tt{learn://fml}).}

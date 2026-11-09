@@ -16,6 +16,8 @@ floor that only rises. `raco fml --tck` runs them with their reports.
 | our StructureMap against the reference's, rule by rule | names, documentation and R4-isms normalised | 21/31 |
 | `check` over every corpus map | no error finding on maps that fit their structures | 55/58 |
 | the FHIR R3/R4 inter-version maps (FHIR/interversion, CI only, not vendored) | every map parses | 332/332 |
+| The guide (`tests/guide-test.rkt`) | every FML example in guide.md parses and checks clean; the cheat sheet and worked example give the results the text states; the quoted findings are the checker's | passes |
+| The manual (`tests/docs-test.rkt`) | scribblings/fml.scrbl renders with no broken reference to its own sections or bindings | passes |
 
 ## The misses, named
 
