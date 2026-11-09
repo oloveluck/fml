@@ -144,3 +144,8 @@ any run-time rule error). Every corpus floor holds.
 **Checked when it compiles** (2026-11-09): the `#lang fml` reader runs `check-map` on the parsed map
 (the R5 types when no FHIR version is registered yet): an error-level finding fails `raco make` at its
 rule. A new user's map writing `tgt.gendr` compiled and silently produced `{"gendr": …}`.
+
+**Says what it could not read** (2026-11-09): a source read leniently loses what does not parse (a
+date written `01/05/1950`, an R4-only element); `fhir/serialize/lenient`'s `lenient-drops` names those
+values by path, and `#lang fml`'s `transform` warns (`#:strict?` raises), `raco fml --transform` warns
+on stderr, a workspace run lists them as `unread`. `tests/drops-test.rkt`.

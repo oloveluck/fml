@@ -137,6 +137,11 @@ instance of a logical model names its type in `resourceType` (`{"resourceType": 
 ## Common problems
 - `` `x` is not an element of T``: the element name is misspelt, or belongs to another version of
   FHIR (the engine targets R5: R4's `Composition.code`, `contributor` are gone).
+- `fml warning: the source's item[0].answer[0].valueDate ("01/05/1950") not read`: the source holds a
+  value that is not valid FHIR (a date written `01/05/1950`), or an element the R5 type lacks; the
+  map never saw it, so whatever it would have written is missing. Fix the source, or convert it in
+  the map from a string. `transform #:strict? #t` makes it an error; a workspace run lists it as
+  `unread`.
 - A target element is missing from the result: its rule's source matched nothing. Transform one
   source and look at which rules wrote what (`explain` in a workspace), or loosen the `where`.
 - A required element is reported unassigned: add a rule that writes it, or a dependent group that

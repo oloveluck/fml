@@ -12,16 +12,32 @@
          (only-in fhir/registry register-resources!)
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
+         (only-in fhir/serialize/lenient lenient-drops drop->string)
+         (only-in racket/string string-join)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?))
 
 ;; as-node : FHIR JSON | typed node -> typed node   (read leniently into the registered tower; FML's
 ;; engine needs one — fhir/r5/schemas when nothing else registered a tower)
-(define (as-node src)
+(define (as-node src [strict? #f])
   (cond [(fhir? src) src]
         [else (dynamic-require 'fhir/r5/schemas #f)
               (define r (from-json src #:lenient? #t))
-              (if (ok? r) (ok-value r) (raise-argument-error 'transform "a FHIR resource" src))]))
+              (unless (ok? r) (raise-argument-error 'transform "a FHIR resource" src))
+              (report-drops! src (ok-value r) strict?)
+              (ok-value r)]))
+
+;; report-drops! : JSON node strict? -> void   a value of the source the lenient read left out (a date
+;; that is not a date, an element the R5 type lacks) is said — the map never sees it, so a later
+;; "required element missing" would otherwise blame the wrong thing; #:strict? makes it an error
+(define (report-drops! src node strict?)
+  (define drops (lenient-drops src node))
+  (unless (null? drops)
+    (define msg (format "the source's ~a not read: not a valid value, or not an element of ~a in FHIR R5"
+                        (string-join (map drop->string drops) ", ") (hash-ref src 'resourceType "its type")))
+    (if strict?
+        (raise (exn:fail (string-append "transform: " msg) (current-continuation-marks)))
+        (eprintf "fml warning: ~a\n" msg))))
 
 (provide (except-out (all-from-out racket/base) #%module-begin)
          (rename-out [fml-module-begin #%module-begin])
@@ -45,12 +61,12 @@
         (register-structure-map! fml)                        ; resolvable by its url in this process
         (define structuremap (fml->structuremap fml))
         (register-resources! (list structuremap) #:source (variable-reference->module-source (#%variable-reference)))
-        (define (transform src #:structures [structures #f])
+        (define (transform src #:structures [structures #f] #:strict? [strict? #f])
           (parameterize ([current-data-source
                           (cond [(not structures) (current-data-source)]
                                 [(data-source? structures) structures]
                                 [else (resources->data-source structures)])])
             (uses-types fml)                                 ; the logical models, before the source is read
-            (run-map fml (as-node src))))
+            (run-map fml (as-node src strict?))))
         (provide fml structuremap transform)
         (module+ main (displayln (jsexpr->string structuremap))))]))

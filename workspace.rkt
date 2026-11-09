@@ -18,6 +18,7 @@
          (only-in fhir/registry registered-resources)
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in fhir/serialize/from-json from-json)
+         (only-in fhir/serialize/lenient lenient-drops drop->string)
          (only-in "parser/parse.rkt" parse-fml)
          (only-in "error.rkt" fml-error-diagnostic fml-error-string)
          (only-in "structuremap.rkt" fml->structuremap)
@@ -85,12 +86,15 @@
   (define rows
     (for/list ([src (in-list (sources m opts))])
       (with-handlers ([exn:fail? (lambda (e) (hasheq 'source (reference src) 'error (exn-message e)))])
-        (define out (run-map m (typed src)))
-        (hasheq 'source (reference src)
-                'target (if (hash-ref out 'id #f) (reference out) (hash-ref out 'resourceType 'null))
-                'errors (validation-errors out)
-                'resource out))))
-  (run-result "transform" '("source" "target" "errors" "resource") rows
+        (define node (typed src))
+        (define out (run-map m node))
+        (define unread (map drop->string (lenient-drops src node)))   ; what the map never saw
+        (define row (hasheq 'source (reference src)
+                            'target (if (hash-ref out 'id #f) (reference out) (hash-ref out 'resourceType 'null))
+                            'errors (validation-errors out)
+                            'resource out))
+        (if (null? unread) row (hash-set row 'unread unread)))))
+  (run-result "transform" (append '("source" "target" "errors") (if (ormap (lambda (r) (hash-has-key? r 'unread)) rows) '("unread") '()) '("resource")) rows
               (hasheq 'sources (length rows)
                       'failed (count (lambda (r) (hash-has-key? r 'error)) rows)
                       'invalid (count (lambda (r) (let ([e (hash-ref r 'errors 0)]) (and (number? e) (positive? e)))) rows))))
