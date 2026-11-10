@@ -109,12 +109,24 @@ fml map.map --transform source.json                # run it over one (R5) resour
 fml map.map --transform source.json --structures sds/   # over logical models: their StructureDefinitions
 fml check map.map --structures sds/ --examples ex/ --profile profile.json   # check; transform and validate
 ```
+`--profile` is a StructureDefinition file, an FSH project (a directory or a `.fsh` file: its
+profiles, and its other definitions in context), or a canonical the packages define; a profile
+applies to the results of its type.
 A StructureMap `.json` is read wherever a `.map` is. Errors and findings are at their line, exit 1
 on an error; `--format json` gives them as JSON.
 
 **As a module.** A file that starts with `#lang fml` is a Racket module providing `transform`
 (FHIR JSON in, FHIR JSON out; `#:structures` for logical models), `structuremap` and the AST.
 Requiring it registers its StructureMap, so the map is found by its canonical.
+`(transform qr #:validate "fsh/")` holds the result to its base type and those profiles (`#t`: the
+base type and what it claims; a canonical, an FSH project, an SD, or a list of them) and raises
+with each problem at the rule that wrote the element — `ensure-valid` after the map can only name
+the element:
+```
+the map's Patient is invalid:
+  intake.rkt:7:47: fml validate error: Patient.gender: code not in required value set …
+  intake.rkt: fml validate error: Patient.birthDate: minimum required = 1, but found 0 (no rule of main writes `birthDate`)
+```
 
 **By canonical, or as an operation.** `(structure-map "http://…/StructureMap/x")` (`fml/registry`)
 is the map as a typed procedure, found among the maps registered in the process, the data source,

@@ -1,0 +1,58 @@
+#lang racket/base
+
+;;; validate-test.rkt — what a new user wanted from a map in a pipeline: a result that breaks a
+;;; profile names the map's RULE, not only the element (`ensure-valid` after the map cannot), and a
+;;; profile is given as the user has it — an FSH project or a canonical, not only an SD file.
+;;;   (transform qr #:validate "<fsh dir>")        raises, each problem at the rule that wrote it
+;;;   raco fml check map.fml --examples … --profile <fsh dir | canonical | sd.json>
+
+(require rackunit racket/file racket/port racket/system racket/string json compiler/find-exe
+         (only-in fml/check profiles-from check-map/examples)
+         (only-in fml/parser/parse parse-fml)
+         (only-in fhir/result/result ok-value)
+         (only-in fhir/diagnostic diagnostic-message diagnostic-loc loc-line))
+
+(define dir (make-temporary-directory "fml-validate-~a"))
+(make-directory (build-path dir "fsh"))
+(with-output-to-file (build-path dir "fsh" "intake.fsh")
+  (lambda () (display "Profile: IntakePatient\nParent: Patient\nId: intake-patient\n* birthDate 1..1\n* gender 1..1\n")))
+(define map-text #<<FML
+#lang fml
+map "http://example.org/StructureMap/intake" = "Intake"
+uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
+uses "http://hl7.org/fhir/StructureDefinition/Patient" as target
+
+group main(source src : QuestionnaireResponse, target tgt : Patient) {
+  src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value) "gender";
+}
+FML
+  )
+(with-output-to-file (build-path dir "intake.rkt") (lambda () (display map-text)))
+(define qr (hasheq 'resourceType "QuestionnaireResponse" 'status "completed"
+                   'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueString "femme"))))))
+(with-output-to-file (build-path dir "qr.json") (lambda () (write-json qr)))
+
+;; the profiles of an FSH project
+(define ps (profiles-from (build-path dir "fsh")))
+(check-equal? (map (lambda (p) (hash-ref p 'url)) ps) '("http://example.org/StructureDefinition/intake-patient"))
+
+;; transform #:validate: the gender rule wrote "femme" (line 7), no rule writes birthDate
+(define transform (dynamic-require (build-path dir "intake.rkt") 'transform))
+(check-equal? (transform qr) (hash 'resourceType "Patient" 'gender "femme"))   ; without, as before
+(define msg (with-handlers ([exn:fail:user? exn-message]) (transform qr #:validate (path->string (build-path dir "fsh"))) "no error"))
+(check-regexp-match #rx"^the map's Patient is invalid:" msg)
+(check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender" msg)
+(check-regexp-match #rx"Patient[.]birthDate: .*1.*[(]no rule of main writes `birthDate`[)]" msg)
+;; by canonical, once the FSH has been read (its profiles are registered)
+(check-exn #rx"birthDate" (lambda () (transform qr #:validate "http://example.org/StructureDefinition/intake-patient")))
+(check-exn #rx"is not a JSON file, an FSH project, or a canonical" (lambda () (transform qr #:validate "http://example.org/nope")))
+
+;; the command line: --profile takes the FSH directory
+(define out (open-output-string))
+(define ok? (parameterize ([current-error-port out] [current-output-port out])
+              (system* (find-exe) "-l-" "raco" "fml" "check" (path->string (build-path dir "intake.rkt"))
+                       "--examples" (path->string (build-path dir "qr.json"))
+                       "--profile" (path->string (build-path dir "fsh")))))
+(check-false ok?)
+(check-regexp-match #rx"example 1: Patient.birthDate: .*no rule of main writes `birthDate`" (get-output-string out))
+(delete-directory/files dir)

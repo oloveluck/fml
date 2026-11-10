@@ -25,11 +25,13 @@ example, what the checker reports, and the common problems (that guide is what f
    engine reads R5; a source from another version is read leniently.
 3. **Validate the results.** `raco fml check map.map --examples ex/ [--profile profile.json]`
    transforms each example (a file or a directory of them) and validates the result against the
-   target structure and the profile; a problem is traced to the rule that wrote the element:
+   target structure and the profile (a StructureDefinition file, an FSH project directory, or a
+   canonical); a problem is traced to the rule that wrote the element, or says no rule writes it:
    ```
-   nocode.map: fml validate error: example 1: Observation.code: minimum required = 1, but found 0
+   nocode.map: fml validate error: example 1: Observation.code: minimum required = 1, but found 0 (no rule of main writes `code`)
    nocode.map: 2 findings, 1 example validated
    ```
+   From Racket, a `#lang fml` module's `(transform src #:validate "fsh/")` raises the same way.
 4. **Narrow it down.** A target element missing from the result means its rule's source matched
    nothing: transform once with the rule's `where` removed, or split the rule, and compare.
 

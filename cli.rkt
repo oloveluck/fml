@@ -7,7 +7,7 @@
 ;;;   raco fml <file.map> --transform <src.json>  run the map over a source resource (R5), print the target
 ;;;       [--structures <file|dir>]               StructureDefinitions the map's `uses` resolve in
 ;;;                                               (logical models: a JSON file, a Bundle, or a directory)
-;;;   raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...
+;;;   raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...
 ;;;                                               the map against its structures: findings positioned in
 ;;;                                               the FML; with examples, each result validated
 ;;;   raco fml --parse-corpus <dir>               parse every .map under a directory, report the failures
@@ -19,7 +19,8 @@
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap fml->structuremap structuremap->fml)
          (only-in fml/transform run-map uses-types)
-         (only-in fml/check check-map check-map/examples)
+         (only-in fml/check check-map check-map/examples profiles-from)
+         (only-in racket/list append-map)
          (only-in fhir/diagnostic diagnostic-severity)
          (only-in "error.rkt" fml-error-string fml-error-diagnostic fml-error-message)
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc loc-source emit-diagnostics format-flag
@@ -98,13 +99,14 @@
             [(directory-exists? e) (for/list ([f (in-directory e)] #:when (regexp-match? #px"\\.json$" (path->string f)))
                                      (call-with-input-file f read-json))]
             [else (list (call-with-input-file e read-json))])))
-  (define profiles (for/list ([p (in-list (hash-ref opts "--profile" '()))]) (call-with-input-file p read-json)))
+  ;; a profile is a StructureDefinition file, an FSH project (its profiles), or a canonical
+  (define (profiles) (append-map profiles-from (hash-ref opts "--profile" '())))
   (parameterize ([current-data-source
                   (cond [(not structures) (current-data-source)]
                         [(directory-exists? structures) (directory->data-source structures)]
                         [else (resources->data-source (list (call-with-input-file structures read-json)))])])
     (define ds (append (check-map m #:source file)
-                       (if (null? examples) '() (check-map/examples m examples #:profiles profiles #:source file))))
+                       (if (null? examples) '() (check-map/examples m examples #:profiles (profiles) #:source file))))
     (emit-diagnostics ds #:format (current-format) #:text-of (lambda (_) src))
     (when (eq? (current-format) 'text)
       (eprintf "~a: ~a finding~a~a\n" file (length ds) (if (= 1 (length ds)) "" "s")
@@ -123,7 +125,7 @@
 
 (define (usage [code 2])                             ; --help: stdout, exit 0
   ((if (zero? code) printf eprintf)
-   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
+   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
   (exit code))
 
 (module+ main

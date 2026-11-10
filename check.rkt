@@ -28,6 +28,8 @@
          (only-in fhir/model/schema field-spec? fs-name fs-min)
          (only-in fhir/model/registry type-registered?)
          (only-in fhir/serialize/from-json from-json)
+         (only-in fhir/registry register-resources!)
+         (only-in json read-json)
          (only-in fhir/result/result ok? ok-value))
 
 (provide (contract-out
@@ -36,6 +38,12 @@
           ;; check-map/examples : map examples [#:profiles sds #:source file] -> (listof diagnostic)
           ;; each example (FHIR JSON) transformed, the result validated against its base type and the
           ;; profiles; issues positioned at the rule that wrote the element
+          ;; validate-result : map result [#:profiles sds #:source file #:label str] -> (listof diagnostic)
+          [validate-result (->* (fml-map? any/c) (#:profiles (listof hash?) #:source (or/c string? path? #f) #:label string?)
+                                (listof diagnostic?))]
+          ;; profiles-from : spec -> (listof StructureDefinition)   a JSON file, an FSH project (a
+          ;; directory or a .fsh file: its profiles, its definitions registered), a canonical
+          [profiles-from (-> (or/c string? path? hash?) (listof hash?))]
           [check-map/examples (->* (fml-map? (listof hash?)) (#:profiles (listof hash?) #:source (or/c string? path? #f))
                                    (listof diagnostic?))]))
 
@@ -188,17 +196,13 @@
                 tty (fs-name f) (fs-min f) (fml-group-name entry)))]))
 
 ;; ---- examples, validated ----------------------------------------------------------
+(define (validator name)
+  (dynamic-require 'fhir/conformance/validate name
+                   (lambda () (error 'check-map/examples "validating needs the fhir-validation package: raco pkg install fhir-validation"))))
+
 (define (check-map/examples m examples #:profiles [profiles '()] #:source [source #f])
-  (define validate-issues (dynamic-require 'fhir/conformance/validate 'validate-issues
-                                           (lambda () (error 'check-map/examples "validating needs the fhir-validation package: raco pkg install fhir-validation"))))
-  (define issue-severity (dynamic-require 'fhir/conformance/validate 'issue-severity))
-  (define issue-path (dynamic-require 'fhir/conformance/validate 'issue-path))
-  (define issue-msg (dynamic-require 'fhir/conformance/validate 'issue-msg))
   (dynamic-require 'fhir/r5/schemas #f)
   (uses-types m)
-  (define entry (car (fml-map-groups m)))
-  (define tparam (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry)))
-  (define paths (target-paths entry (and tparam (fml-param-name tparam))))
   (append*
    (for/list ([ex (in-list examples)] [i (in-naturals 1)])
      (define r (from-json ex #:lenient? #t))
@@ -208,13 +212,58 @@
         (define out (with-handlers ([exn:fail? (lambda (e) e)]) (run-map m (ok-value r))))
         (cond
           [(exn? out) (list (diagnostic 'fml 'check 'error (format "example ~a: ~a" i (exn-message out)) (loc source #f #f #f #f)))]
-          [else
-           (for/list ([iss (in-list (validate-issues out #:profiles profiles))]
-                      #:when (member (issue-severity iss) '("error" "fatal" "warning")))
-             (define rule (trace-target paths (issue-path iss)))
-             (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
-                         (format "example ~a: ~a: ~a" i (issue-path iss) (issue-msg iss))
-                         (or (and rule (attached-loc rule)) (loc source #f #f #f #f))))])]))))
+          [else (validate-result m out #:profiles profiles #:source source #:label (format "example ~a: " i))])]))))
+
+;; profiles-from : spec -> (listof SD)   where a profile comes from, as a user names it
+(define (profiles-from spec)
+  (define (sd? r) (and (hash? r) (equal? (hash-ref r 'resourceType #f) "StructureDefinition")))
+  (cond
+    [(hash? spec) (list spec)]
+    [(and (file-exists? spec) (regexp-match? #rx"[.]json$" (if (path? spec) (path->string spec) spec)))
+     (list (call-with-input-file spec read-json))]
+    [(or (directory-exists? spec) (and (file-exists? spec) (regexp-match? #rx"[.]fsh$" (if (path? spec) (path->string spec) spec))))
+     (define compile-project (dynamic-require 'fsh/project 'compile-project
+                                              (lambda () (raise-user-error 'fml "--profile ~a: reading an FSH project needs the fsh package" spec))))
+     (define artifacts (dynamic-require 'fsh/project 'project-artifacts))
+     (define sds (filter sd? (artifacts (compile-project spec))))
+     ;; its definitions resolve by canonical (a profile of a profile, an extension)
+     (register-resources! sds #:source (string->symbol (format "fml --profile ~a" spec)))
+     (define profiles (filter (lambda (sd) (equal? (hash-ref sd 'derivation #f) "constraint")) sds))
+     (when (null? profiles) (raise-user-error 'fml "--profile ~a: the FSH defines no profile" spec))
+     profiles]
+    [else
+     (define resolve (dynamic-require 'fhir/sd/operations 'resolve-structure-definition))
+     (define sd (resolve spec))
+     (unless sd
+       (raise-user-error 'fml "profile ~a is not a JSON file, an FSH project, or a canonical the data, the registered modules or the packages define" spec))
+     (list sd)]))
+
+;; validate-result : map result-json [#:profiles sds #:source s #:label str] -> (listof diagnostic)
+;; the map's result held to its base type, the profiles it claims and those given that are of its
+;; type (a profile of another type does not apply); each problem at the rule that wrote the element,
+;; or, when no rule writes it, at the map with the rules' words: "no rule of <group> writes `x`"
+(define (validate-result m out #:profiles [profiles '()] #:source [source #f] #:label [label ""])
+  (define validate-issues (validator 'validate-issues))
+  (define issue-severity (validator 'issue-severity))
+  (define issue-path (validator 'issue-path))
+  (define issue-msg (validator 'issue-msg))
+  (define entry (car (fml-map-groups m)))
+  (define tparam (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry)))
+  (define paths (target-paths entry (and tparam (fml-param-name tparam))))
+  (define type (and (hash? out) (hash-ref out 'resourceType #f)))
+  (define applicable (filter (lambda (sd) (member (hash-ref sd 'type type) (list type))) profiles))
+  (for/list ([iss (in-list (validate-issues out #:profiles applicable))]
+             #:when (member (issue-severity iss) '("error" "fatal" "warning")))
+    (define rule (trace-target paths (issue-path iss)))
+    (define at (and rule (attached-loc rule)))
+    (define unwritten
+      (let ([segs (string-split (issue-path iss) ".")])
+        (if (and (not rule) (> (length segs) 1))
+            (format " (no rule of ~a writes `~a`)" (fml-group-name entry) (regexp-replace #px"\\[x\\]$" (cadr segs) ""))
+            "")))
+    (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
+                (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)
+                (or at (loc source #f #f #f #f)))))
 
 ;; target-paths : entry-group target-var -> (listof (cons element-path target))   every target's path
 ;; from the entry target, variables followed (`tgt.component as c` then `c.code` is component.code)

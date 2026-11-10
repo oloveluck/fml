@@ -149,3 +149,13 @@ rule. A new user's map writing `tgt.gendr` compiled and silently produced `{"gen
 date written `01/05/1950`, an R4-only element); `fhir/serialize/lenient`'s `lenient-drops` names those
 values by path, and `#lang fml`'s `transform` warns (`#:strict?` raises), `raco fml --transform` warns
 on stderr, a workspace run lists them as `unread`. `tests/drops-test.rkt`.
+
+**Names the rule in a pipeline** (2026-11-10): `#lang fml`'s `(transform src #:validate spec)` holds
+the result to its base type and the profiles `spec` names (`#t`, a canonical, an SD, an FSH project,
+a list) and raises `exn:fail:user` with each problem at the rule that wrote the element, or `no rule of
+<group> writes `x`` — `ensure-valid` after the map can only name the element. The reader now puts the
+map's text and file into the module (`(fml-map-form ast text source)`): the quoted AST loses its
+positions, so the module parses the text again on first validation. `check.rkt`'s `validate-result`
+is the one place a result is validated and traced (check-map/examples uses it); `profiles-from`
+resolves `--profile` as a JSON file, an FSH project (fsh/project on demand; its definitions
+registered) or a canonical; a profile applies to results of its type. `tests/validate-test.rkt`.

@@ -16,11 +16,14 @@ fml/base
 
 (define (source-name src) (cond [(path? src) (path->string src)] [(string? src) src] [else #f]))
 (define (fml-read-syntax src in)
-  (define r (parse-fml (port->string in) #:source (source-name src)))
+  (define text (port->string in))
+  (define r (parse-fml text #:source (source-name src)))
   (cond
     [(ok? r)
      (check! (ok-value r) (source-name src))
-     (list (datum->syntax #f (list 'fml-map-form (ok-value r))))]
+     ;; the text and its file go into the module too: the AST's positions do not survive being
+     ;; quoted into it, and `transform #:validate` reads them again to name a rule's line
+     (list (datum->syntax #f (list 'fml-map-form (ok-value r) text (source-name src))))]
     [else (let ([d (fml-error-diagnostic (err-error r))])
             (if d (raise-diagnostic d) (error 'fml (format "~a" (err-error r)))))]))
 
