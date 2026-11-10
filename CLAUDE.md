@@ -159,3 +159,7 @@ positions, so the module parses the text again on first validation. `check.rkt`'
 is the one place a result is validated and traced (check-map/examples uses it); `profiles-from`
 resolves `--profile` as a JSON file, an FSH project (fsh/project on demand; its definitions
 registered) or a canonical; a profile applies to results of its type. `tests/validate-test.rkt`.
+
+**Says why nothing is there** (2026-11-10): when the rule an issue traces to exists but its element is
+absent from the result, `validate-result` adds `(the rule here wrote nothing: its source matched nothing
+in the input)` — a missing item, a `where` that held for none — beside `(no rule of <group> writes …)`.

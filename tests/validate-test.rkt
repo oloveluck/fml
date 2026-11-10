@@ -43,6 +43,10 @@ FML
 (check-regexp-match #rx"^the map's Patient is invalid:" msg)
 (check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender" msg)
 (check-regexp-match #rx"Patient[.]birthDate: .*1.*[(]no rule of main writes `birthDate`[)]" msg)
+;; the gender rule is there but matched nothing (no gender item): said so, at the rule
+(define no-gender (hash-set qr 'item '()))
+(define msg2 (with-handlers ([exn:fail:user? exn-message]) (transform no-gender #:validate (path->string (build-path dir "fsh"))) "no error"))
+(check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender: .*[(]the rule here wrote nothing: its source matched nothing in the input[)]" msg2)
 ;; by canonical, once the FSH has been read (its profiles are registered)
 (check-exn #rx"birthDate" (lambda () (transform qr #:validate "http://example.org/StructureDefinition/intake-patient")))
 (check-exn #rx"is not a JSON file, an FSH project, or a canonical" (lambda () (transform qr #:validate "http://example.org/nope")))

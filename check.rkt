@@ -256,11 +256,16 @@
              #:when (member (issue-severity iss) '("error" "fatal" "warning")))
     (define rule (trace-target paths (issue-path iss)))
     (define at (and rule (attached-loc rule)))
+    ;; nothing there: no rule writes the element, or the one that does wrote nothing (its source
+    ;; matched nothing in this input — a missing item, a `where` that held for none)
     (define unwritten
-      (let ([segs (string-split (issue-path iss) ".")])
-        (if (and (not rule) (> (length segs) 1))
-            (format " (no rule of ~a writes `~a`)" (fml-group-name entry) (regexp-replace #px"\\[x\\]$" (cadr segs) ""))
-            "")))
+      (let* ([segs (string-split (issue-path iss) ".")]
+             [elem (and (> (length segs) 1) (regexp-replace #px"\\[x\\]$" (cadr segs) ""))])
+        (cond [(not elem) ""]
+              [(not rule) (format " (no rule of ~a writes `~a`)" (fml-group-name entry) elem)]
+              [(and (hash? out) (not (for/or ([k (in-hash-keys out)]) (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k)))))
+               (format " (the rule here wrote nothing: its source matched nothing in the input)")]
+              [else ""])))
     (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
                 (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)
                 (or at (loc source #f #f #f #f)))))

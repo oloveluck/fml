@@ -127,6 +127,9 @@ the map's Patient is invalid:
   intake.rkt:7:47: fml validate error: Patient.gender: code not in required value set …
   intake.rkt: fml validate error: Patient.birthDate: minimum required = 1, but found 0 (no rule of main writes `birthDate`)
 ```
+When a rule for the element exists but its source matched nothing (the response had no birthDate
+item), the problem is at that rule and says `(the rule here wrote nothing: its source matched
+nothing in the input)`.
 
 **By canonical, or as an operation.** `(structure-map "http://…/StructureMap/x")` (`fml/registry`)
 is the map as a typed procedure, found among the maps registered in the process, the data source,
