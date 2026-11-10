@@ -130,7 +130,7 @@ problem) with each problem at the rule that wrote the element — `ensure-valid`
 the element:
 ```
 the map's Patient is invalid against IntakePatient (http://example.org/StructureDefinition/intake-patient) (FHIR R5 (5.0.0)):
-  intake.rkt:7:47: fml validate error: Patient.gender: code not in required value set …
+  intake.rkt:7:47: fml validate error: Patient.gender: code `…` not in required value set …
   intake.rkt: fml validate error: Patient.birthDate: minimum required = 1, but found 0 (no rule of main writes `birthDate`)
 ```
 When a rule for the element exists but its source matched nothing (the response had no birthDate
@@ -156,6 +156,9 @@ Give the definitions with `--structures` on the command line or `#:structures` f
 instance of a logical model names its type in `resourceType` (`{"resourceType": "TLeft", "a": …}`).
 
 ## Common problems
+- `` `tgt.gender` is a code, but the rule assigns an object {code, system}: assign its `code`,
+  `(a.value.code)` `` — a Coding (an answer's `valueCoding`) assigned to a primitive element; the rule
+  says which part of the object fits.
 - `` `x` is not an element of T``: the element name is misspelt, or belongs to another version of
   FHIR (the engine targets R5: R4's `Composition.code`, `contributor` are gone).
 - `fml warning: the source's item[0].answer[0].valueDate ("01/05/1950") not read`: the source holds a

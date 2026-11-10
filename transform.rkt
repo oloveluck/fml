@@ -365,11 +365,28 @@
   (cond
     [group (call-group c group (list typed-source slot) sc)]
     [tr (define v (transform-value c r tr sc slot))
+        (check-primitive-target! r t slot v tr)
         (unless (eq? v 'null) ((tslot-set! slot) (coerce v (tslot-prim slot))))]
     [(and implicit? (fml-target-element t) src-elem)
      ((tslot-set! slot) (coerce (value->jsexpr src-elem) (tslot-prim slot)))]
     [else (void)])
   (if (fml-target-variable t) (bind sc (fml-target-variable t) slot) sc))
+
+;; check-primitive-target! : rule target slot value -> void
+;; A primitive element takes a primitive: a Coding assigned to `gender` (a code) was written as the
+;; object `{"code": …, "system": …}`, and validation then blamed `code.code` with no line. The rule
+;; is told, with the element of the object that would fit (`a.value.code`).
+(define (check-primitive-target! r t slot v tr)
+  (define prim (tslot-prim slot))
+  (when (and prim (hash? v) (positive? (hash-count v)))     ; {} is a value the read dropped: said elsewhere
+    (define keys (sort (map symbol->string (hash-keys v)) string<?))
+    (define fits (for/first ([k (in-list '("code" "value" "reference" "display" "text"))] #:when (member k keys)) k))
+    (rule-error r "`~a.~a` is a ~a, but the rule assigns an object {~a}~a"
+                (fml-target-context t) (fml-target-element t) prim (string-join keys ", ")
+                (cond [(not fits) ""]
+                      [(fml-fhirpath? tr) (format ": assign its `~a`, `(~a.~a)`" fits (fhirpath->string (fml-fhirpath-ast tr)) fits)]
+                      [(fml-var? tr) (format ": assign its `~a`, `(~a.~a)`" fits (fml-var-name tr) fits)]
+                      [else (format ": assign its `~a`" fits)]))))
 
 ;; types-group : ctx source-type target-type -> the `types`/`type+` group whose parameters match
 (define (types-group c st tt)

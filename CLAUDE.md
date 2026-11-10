@@ -179,3 +179,8 @@ guide.md shows a `#lang fml` file and the error Racket gives without the line.
 
 **Prints FHIR JSON as FHIR writes it** (2026-11-10): `raco fml --transform` prints with
 `fhir/serialize/fhir-json` (`resourceType` first).
+
+**A primitive element takes a primitive** (2026-11-10): `check-primitive-target!` (transform.rkt) refuses an
+object assigned to a primitive element, at the rule, naming the part that fits (`(a.value.code)`; an empty
+`{}` — a value the lenient read dropped — is said elsewhere); a `#lang fml` module runs its positioned
+parse (`located`), so a rule error names its line. Every corpus floor holds. `tests/primitive-target-test.rkt`.

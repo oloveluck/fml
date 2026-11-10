@@ -135,7 +135,7 @@
                                 [else (resources->data-source structures)])])
             (uses-types fml)                                 ; the logical models, before the source is read
             (define node (as-node src strict?))
-            (define out (run-map fml node))
+            (define out (run-map (located) node))            ; positioned, so a rule error names its line
             (when validate
               (check-result! (located) out validate (~? (quote form.source) #f)
                              (if (fhir? src) '() (lenient-drops src node))))
