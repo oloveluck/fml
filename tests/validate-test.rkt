@@ -40,7 +40,7 @@ FML
 (define transform (dynamic-require (build-path dir "intake.rkt") 'transform))
 (check-equal? (transform qr) (hash 'resourceType "Patient" 'gender "femme"))   ; without, as before
 (define msg (with-handlers ([exn:fail:user? exn-message]) (transform qr #:validate (path->string (build-path dir "fsh"))) "no error"))
-(check-regexp-match #rx"^the map's Patient is invalid:" msg)
+(check-regexp-match #rx"^the map's Patient is invalid against IntakePatient [(]http://example.org/StructureDefinition/intake-patient[)] [(]FHIR R5 [(]5.0.0[)][)]:" msg)
 (check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender" msg)
 (check-regexp-match #rx"Patient[.]birthDate: .*1.*[(]no rule of main writes `birthDate`[)]" msg)
 ;; the gender rule is there but matched nothing (no gender item): said so, at the rule

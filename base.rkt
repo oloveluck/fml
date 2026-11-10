@@ -38,8 +38,25 @@
                          [else (profiles-from spec)]))
   (define errors (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (validate-result fml out #:profiles profiles #:source source)))
   (unless (null? errors)
-    (raise-user-error (format "the map's ~a is invalid:\n  ~a" (if (hash? out) (hash-ref out 'resourceType "result") "result")
+    (raise-user-error (format "the map's ~a is invalid against ~a (FHIR ~a):\n  ~a"
+                              (if (hash? out) (hash-ref out 'resourceType "result") "result")
+                              (against profiles out) (validated-in)
                               (string-join (map diagnostic->string errors) "\n  ")))))
+
+;; against : profiles result -> string   what the result was held to: "IntakePatient (http://…)", or its base type
+(define (against profiles out)
+  (define mine (filter (lambda (sd) (equal? (hash-ref sd 'type #f) (and (hash? out) (hash-ref out 'resourceType #f)))) profiles))
+  (if (null? mine)
+      (format "the base type ~a" (if (hash? out) (hash-ref out 'resourceType "?") "?"))
+      (string-join (for/list ([sd (in-list mine)]) (format "~a (~a)" (hash-ref sd 'name (hash-ref sd 'id "?")) (hash-ref sd 'url "?"))) ", ")))
+
+;; validated-in : -> string   the FHIR version validation reads: the core package in context, else R5
+(define (validated-in)
+  (define pkgs (map (lambda (p) (if (path? p) (path->string p) (format "~a" p)))
+                    (or ((dynamic-require 'fhir/sd/sd-index 'current-sd-packages)) '())))
+  (cond [(ormap (lambda (p) (regexp-match? #rx"r4[.]core" p)) pkgs) "R4 (4.0.1)"]
+        [(ormap (lambda (p) (regexp-match? #rx"r6[.]core" p)) pkgs) "R6"]
+        [else "R5 (5.0.0)"]))
 
 ;; as-node : FHIR JSON | typed node -> typed node   (read leniently into the registered tower; FML's
 ;; engine needs one — fhir/r5/schemas when nothing else registered a tower)

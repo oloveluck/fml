@@ -123,7 +123,7 @@ base type and what it claims; a canonical, an FSH project, an SD, or a list of t
 with each problem at the rule that wrote the element — `ensure-valid` after the map can only name
 the element:
 ```
-the map's Patient is invalid:
+the map's Patient is invalid against IntakePatient (http://example.org/StructureDefinition/intake-patient) (FHIR R5 (5.0.0)):
   intake.rkt:7:47: fml validate error: Patient.gender: code not in required value set …
   intake.rkt: fml validate error: Patient.birthDate: minimum required = 1, but found 0 (no rule of main writes `birthDate`)
 ```

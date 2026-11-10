@@ -163,3 +163,7 @@ registered) or a canonical; a profile applies to results of its type. `tests/val
 **Says why nothing is there** (2026-11-10): when the rule an issue traces to exists but its element is
 absent from the result, `validate-result` adds `(the rule here wrote nothing: its source matched nothing
 in the input)` — a missing item, a `where` that held for none — beside `(no rule of <group> writes …)`.
+
+**Names what it held the result to** (2026-11-10): `transform #:validate`'s error header is `the map's
+Patient is invalid against IntakePatient (<url>) (FHIR R5 (5.0.0)):` — the profiles of the result's type
+(else its base type) and the version validation read.
