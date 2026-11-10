@@ -13,7 +13,7 @@
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/serialize/lenient lenient-drops drop->string)
-         (only-in racket/string string-join)
+         (only-in racket/string string-join string-replace)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?)
          (only-in fml/check validate-result profiles-from)
@@ -32,16 +32,29 @@
 ;; project, or a list of them); an error raises exn:fail:user with each problem at the rule that
 ;; wrote the element, or saying no rule writes it — in a pipeline, `ensure-valid` after the map can
 ;; only name the element
-(define (check-result! fml out spec [source #f])
+(define (check-result! fml out spec [source #f] [drops '()])
   (define profiles (cond [(eq? spec #t) '()]
                          [(list? spec) (append-map profiles-from spec)]
                          [else (profiles-from spec)]))
   (define errors (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (validate-result fml out #:profiles profiles #:source source)))
+  ;; a rule that "matched nothing" because the read dropped its value (`05/01/1950` is no date) is
+  ;; said so: the item was there, the map never saw it
+  (define (why line)
+    (if (null? drops) line
+        (string-replace line "(the rule here wrote nothing: its source matched nothing in the input)"
+                        (format "(the rule here wrote nothing: its source matched nothing the map could read — ~a could not be read)"
+                                (string-join (map drop->string drops) ", ")))))
   (unless (null? errors)
     (raise-user-error (format "the map's ~a is invalid against ~a (FHIR ~a):\n  ~a"
                               (if (hash? out) (hash-ref out 'resourceType "result") "result")
                               (against profiles out) (validated-in)
-                              (string-join (map diagnostic->string errors) "\n  ")))))
+                              (string-join (map (lambda (d) (why (cwd-relative (diagnostic->string d)))) errors) "\n  ")))))
+
+;; cwd-relative : text -> text   a file named in full in a message, named from the current directory
+;; (as `raco fsh check` names its files) when it is below it
+(define (cwd-relative text)
+  (define cwd (path->string (path->directory-path (simplify-path (current-directory)))))
+  (string-replace text cwd ""))
 
 ;; against : profiles result -> string   what the result was held to: "IntakePatient (http://…)", or its base type
 (define (against profiles out)
@@ -111,8 +124,11 @@
                                 [(data-source? structures) structures]
                                 [else (resources->data-source structures)])])
             (uses-types fml)                                 ; the logical models, before the source is read
-            (define out (run-map fml (as-node src strict?)))
-            (when validate (check-result! (located) out validate (~? (quote form.source) #f)))
+            (define node (as-node src strict?))
+            (define out (run-map fml node))
+            (when validate
+              (check-result! (located) out validate (~? (quote form.source) #f)
+                             (if (fhir? src) '() (lenient-drops src node))))
             out))
         (provide fml structuremap transform)
         (module+ main (displayln (jsexpr->string structuremap))))]))

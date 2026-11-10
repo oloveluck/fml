@@ -47,6 +47,15 @@ FML
 (define no-gender (hash-set qr 'item '()))
 (define msg2 (with-handlers ([exn:fail:user? exn-message]) (transform no-gender #:validate (path->string (build-path dir "fsh"))) "no error"))
 (check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender: .*[(]the rule here wrote nothing: its source matched nothing in the input[)]" msg2)
+;; the item is there but its value cannot be read (a Coding written as a string): the message says
+;; the read dropped it, where "matched nothing" sent the user looking for a missing item
+(define unreadable (hash-set qr 'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueCoding "female"))))))
+(define msg3 (parameterize ([current-error-port (open-output-string)])
+               (with-handlers ([exn:fail:user? exn-message]) (transform unreadable #:validate (path->string (build-path dir "fsh"))) "no error")))
+(check-regexp-match #rx"Patient[.]gender: .*its source matched nothing the map could read — item[[]0[]][.]answer[[]0[]][.]valueCoding [(]\"female\"[)] could not be read" msg3)
+;; paths below the current directory are named from it
+(check-regexp-match #rx"\n  intake[.]rkt:7:" (parameterize ([current-directory dir])
+                                                (with-handlers ([exn:fail:user? exn-message]) (transform no-gender #:validate (path->string (build-path dir "fsh"))) "")))
 ;; by canonical, once the FSH has been read (its profiles are registered)
 (check-exn #rx"birthDate" (lambda () (transform qr #:validate "http://example.org/StructureDefinition/intake-patient")))
 (check-exn #rx"is not a JSON file, an FSH project, or a canonical" (lambda () (transform qr #:validate "http://example.org/nope")))

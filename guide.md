@@ -117,7 +117,12 @@ on an error; `--format json` gives them as JSON.
 
 **As a module.** A file that starts with `#lang fml` is a Racket module providing `transform`
 (FHIR JSON in, FHIR JSON out; `#:structures` for logical models), `structuremap` and the AST.
-Requiring it registers its StructureMap, so the map is found by its canonical.
+Requiring it registers its StructureMap, so the map is found by its canonical. The file is the map
+as written anywhere else, after one line: `#lang fml` then `map "http://…" = "intake"`, `uses …`,
+the groups; another module says `(require "intake.fml")` and calls `(transform qr)`.
+Without the `#lang fml` line, requiring the file fails with `default-load-handler: expected a
+`module' declaration, but found something else`: add the line. `raco fml` reads the file with or
+without it.
 `(transform qr #:validate "fsh/")` holds the result to its base type and those profiles (`#t`: the
 base type and what it claims; a canonical, an FSH project, an SD, or a list of them) and raises
 with each problem at the rule that wrote the element — `ensure-valid` after the map can only name

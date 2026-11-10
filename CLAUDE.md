@@ -167,3 +167,8 @@ in the input)` — a missing item, a `where` that held for none — beside `(no 
 **Names what it held the result to** (2026-11-10): `transform #:validate`'s error header is `the map's
 Patient is invalid against IntakePatient (<url>) (FHIR R5 (5.0.0)):` — the profiles of the result's type
 (else its base type) and the version validation read.
+
+**Says what it could not read, at the rule** (2026-11-10): when the rule an issue traces to wrote nothing
+and the lenient read dropped source values, `transform #:validate` says `its source matched nothing the
+map could read — <path> ("…") could not be read`; problem paths are relative to the current directory.
+guide.md shows a `#lang fml` file and the error Racket gives without the line.
