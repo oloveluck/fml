@@ -58,6 +58,15 @@ FML
                                                 (with-handlers ([exn:fail:user? exn-message]) (transform no-gender #:validate (path->string (build-path dir "fsh"))) "")))
 ;; by canonical, once the FSH has been read (its profiles are registered)
 (check-exn #rx"birthDate" (lambda () (transform qr #:validate "http://example.org/StructureDefinition/intake-patient")))
+;; the same error `ensure-valid` raises: one handler, `exn:fail:operation?`, catches an invalid
+;; result from either (fhir-authoring's handler caught nothing from transform), its OperationOutcome
+;; one issue per problem
+(let ([e (with-handlers ([(dynamic-require 'fhir/operation 'exn:fail:operation?) values])
+           (transform qr #:validate (path->string (build-path dir "fsh"))) #f)])
+  (check-true (exn? e))
+  (define oo ((dynamic-require 'fhir/operation 'exn:fail:operation-outcome) e))
+  (check-equal? (hash-ref oo 'resourceType) "OperationOutcome")
+  (check-true (for/or ([i (in-list (hash-ref oo 'issue))]) (regexp-match? #rx"birthDate" (hash-ref i 'diagnostics)))))
 (check-exn #rx"is not a JSON file, an FSH project, or a canonical" (lambda () (transform qr #:validate "http://example.org/nope")))
 
 ;; the command line: --profile takes the FSH directory

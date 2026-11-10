@@ -125,7 +125,8 @@ Without the `#lang fml` line, requiring the file fails with `default-load-handle
 without it.
 `(transform qr #:validate "fsh/")` holds the result to its base type and those profiles (`#t`: the
 base type and what it claims; a canonical, an FSH project, an SD, or a list of them) and raises
-with each problem at the rule that wrote the element — `ensure-valid` after the map can only name
+`exn:fail:operation` (fhir/operation, as `ensure-valid` does; its OperationOutcome has one issue per
+problem) with each problem at the rule that wrote the element — `ensure-valid` after the map can only name
 the element:
 ```
 the map's Patient is invalid against IntakePatient (http://example.org/StructureDefinition/intake-patient) (FHIR R5 (5.0.0)):

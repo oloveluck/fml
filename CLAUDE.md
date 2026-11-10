@@ -172,3 +172,7 @@ Patient is invalid against IntakePatient (<url>) (FHIR R5 (5.0.0)):` — the pro
 and the lenient read dropped source values, `transform #:validate` says `its source matched nothing the
 map could read — <path> ("…") could not be read`; problem paths are relative to the current directory.
 guide.md shows a `#lang fml` file and the error Racket gives without the line.
+
+**One error for an invalid result** (2026-11-10): `transform #:validate` raises `exn:fail:operation`
+(fhir/operation; its OperationOutcome one issue per problem), as `ensure-valid` does — one handler,
+`exn:fail:operation?`, catches both (a new user's documented handler caught nothing). guide.md says so.

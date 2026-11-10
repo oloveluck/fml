@@ -19,6 +19,7 @@
          (only-in fml/check validate-result profiles-from)
          (only-in fml/parser/parse parse-fml)
          (only-in fhir/diagnostic diagnostic->string diagnostic-severity)
+         (only-in fhir/operation exn:fail:operation)
          (only-in racket/list append-map))
 
 ;; located-map : map text|#f source|#f -> map   the map parsed again from its text, so its rules carry
@@ -44,11 +45,20 @@
         (string-replace line "(the rule here wrote nothing: its source matched nothing in the input)"
                         (format "(the rule here wrote nothing: its source matched nothing the map could read — ~a could not be read)"
                                 (string-join (map drop->string drops) ", ")))))
+  ;; raised as `exn:fail:operation` (an exn:fail:user carrying an OperationOutcome), as `ensure-valid`
+  ;; raises, so one handler — `exn:fail:operation?` — catches an invalid result wherever it is found
+  ;; (a new user's documented handler caught nothing: this raised a plain exn:fail:user)
   (unless (null? errors)
-    (raise-user-error (format "the map's ~a is invalid against ~a (FHIR ~a):\n  ~a"
-                              (if (hash? out) (hash-ref out 'resourceType "result") "result")
-                              (against profiles out) (validated-in)
-                              (string-join (map (lambda (d) (why (cwd-relative (diagnostic->string d)))) errors) "\n  ")))))
+    (define lines (map (lambda (d) (why (cwd-relative (diagnostic->string d)))) errors))
+    (raise (exn:fail:operation
+            (format "the map's ~a is invalid against ~a (FHIR ~a):\n  ~a"
+                    (if (hash? out) (hash-ref out 'resourceType "result") "result")
+                    (against profiles out) (validated-in)
+                    (string-join lines "\n  "))
+            (current-continuation-marks)
+            (hasheq 'resourceType "OperationOutcome"
+                    'issue (for/list ([l (in-list lines)])
+                             (hasheq 'severity "error" 'code "invalid" 'diagnostics l)))))))
 
 ;; cwd-relative : text -> text   a file named in full in a message, named from the current directory
 ;; (as `raco fsh check` names its files) when it is below it
