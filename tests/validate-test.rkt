@@ -96,4 +96,10 @@ FML
 (define found (check-map/examples (ok-value (parse-fml (string-replace (file->string (build-path dir "intake2.rkt")) "#lang fml\n" "")))
                                   (list as-string) #:profiles (profiles-from (build-path dir "fsh"))))
 (check-true (for/or ([d (in-list found)]) (regexp-match? #rx"its source matched, but `[(]a[.]value[.]code[)]` was empty" (diagnostic-message d))))
+;; raco fml --transform --indent prints the result indented, as a program's write-fhir-json does
+(let ([out (open-output-string)])
+  (parameterize ([current-output-port out] [current-error-port (open-output-nowhere)])
+    (void (system* (find-exe) "-l-" "raco" "fml" (path->string (build-path dir "intake.rkt"))
+                   "--transform" (path->string (build-path dir "qr.json")) "--indent")))
+  (check-regexp-match #rx"^[{]\n  \"resourceType\": \"Patient\",\n  \"gender\": \"femme\"\n[}]" (get-output-string out)))
 (delete-directory/files dir)

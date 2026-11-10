@@ -65,7 +65,7 @@
 ;; transform-file : path-string path-string [path-string|#f] -> void
 ;; run the map over the R5 resource in src-file; `structures` (a JSON file or a directory of them) holds
 ;; the StructureDefinitions of the map's logical models, resolved before the source is read
-(define (transform-file file src-file [structures #f])
+(define (transform-file file src-file [structures #f] #:indent [indent #f])
   (dynamic-require 'fhir/r5/schemas #f)                 ; the source resource must build as a typed node
   (define m (parse-file file))
   (parameterize ([current-data-source
@@ -86,7 +86,8 @@
                        (define d (exn:fail:diagnostic-diagnostic e))
                        (define l (diagnostic-loc d))
                        (report d (if (and l (equal? (loc-source l) file)) (file->string file) "")))])
-      (displayln (fhir-json->string (run-map m (ok-value r)))))))   ; resourceType first, as FHIR writes it
+      ;; resourceType first, as FHIR writes it; `--indent`: indented as a program's write-fhir-json prints
+      (displayln (fhir-json->string (run-map m (ok-value r)) #:indent indent)))))
 
 ;; check-file : map-file options -> void   the static findings, then the examples validated; exit 1 on an error
 (define (check-file file opts)
@@ -136,7 +137,7 @@
 
 (define (usage [code 2])                             ; --help: stdout, exit 0
   ((if (zero? code) printf eprintf)
-   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
+   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>] [--indent]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
   (exit code))
 
 (module+ main
@@ -171,6 +172,8 @@
                     (cond [(null? as) h]
                           [(and (member (car as) '("--transform" "--structures")) (pair? (cdr as)))
                            (loop (cddr as) (hash-set h (car as) (cadr as)))]
+                          [(equal? (car as) "--indent") (loop (cdr as) (hash-set h "--indent" 2))]
                           [else (usage)])))
      (unless (hash-ref opts "--transform" #f) (usage))
-     (transform-file (car args) (hash-ref opts "--transform") (hash-ref opts "--structures" #f))]))
+     (transform-file (car args) (hash-ref opts "--transform") (hash-ref opts "--structures" #f)
+                     #:indent (hash-ref opts "--indent" #f))]))

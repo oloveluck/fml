@@ -194,3 +194,5 @@ when set) records each target whose value expression came out empty, with the so
 read; `transform #:validate` and `check-map/examples` set it, and `validate-result` says `(the rule here
 wrote nothing: its source matched, but `(a.value.code)` was empty for {"valueString":"female"})` instead
 of "its source matched nothing in the input". guide.md filters gender by its code system, tested.
+
+**Prints indented on request** (2026-11-10): `raco fml <map> --transform <src> --indent`.
