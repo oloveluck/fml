@@ -188,3 +188,9 @@ parse (`located`), so a rule error names its line. Every corpus floor holds. `te
 **Names each example** (2026-11-10): `raco fml check --examples` names an example by its file in each
 finding and in the summary, which says what the results were held to (`against IntakePatient (url)`,
 else the base type and the profiles a result claims); `check-map/examples #:names`.
+
+**Says which part wrote nothing** (2026-11-10): `current-empty-targets` (transform.rkt; a mutable hasheq
+when set) records each target whose value expression came out empty, with the source value the rule
+read; `transform #:validate` and `check-map/examples` set it, and `validate-result` says `(the rule here
+wrote nothing: its source matched, but `(a.value.code)` was empty for {"valueString":"female"})` instead
+of "its source matched nothing in the input". guide.md filters gender by its code system, tested.

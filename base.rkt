@@ -8,7 +8,7 @@
 
 (require (for-syntax racket/base syntax/parse (only-in fml/parser/ast fml-map?)) json
          (only-in fml/structuremap fml->structuremap)
-         (only-in fml/transform run-map uses-types register-structure-map!)
+         (only-in fml/transform run-map uses-types register-structure-map! current-empty-targets)
          (only-in fhir/registry register-resources!)
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
@@ -135,10 +135,11 @@
                                 [else (resources->data-source structures)])])
             (uses-types fml)                                 ; the logical models, before the source is read
             (define node (as-node src strict?))
-            (define out (run-map (located) node))            ; positioned, so a rule error names its line
-            (when validate
-              (check-result! (located) out validate (~? (quote form.source) #f)
-                             (if (fhir? src) '() (lenient-drops src node))))
-            out))
+            (parameterize ([current-empty-targets (make-hasheq)])   ; which values came out empty
+              (define out (run-map (located) node))          ; positioned, so a rule error names its line
+              (when validate
+                (check-result! (located) out validate (~? (quote form.source) #f)
+                               (if (fhir? src) '() (lenient-drops src node))))
+              out)))
         (provide fml structuremap transform)
         (module+ main (displayln (jsexpr->string structuremap))))]))

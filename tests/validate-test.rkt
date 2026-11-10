@@ -80,4 +80,20 @@ FML
 ;; said "1 example validated" and nothing of the profile)
 (check-regexp-match #rx"qr[.]json: Patient.birthDate: .*no rule of main writes `birthDate`" (get-output-string out))
 (check-regexp-match #rx"1 example validated [(][^)]*qr[.]json[)] against IntakePatient [(]http://[^)]*[)]" (get-output-string out))
+
+;; the rule's source matched, but its value expression gave nothing for what it read (gender answered
+;; as valueString, the rule reading `(a.value.code)`): said so with the value read — it said "its source
+;; matched nothing in the input", and the item was there
+(with-output-to-file (build-path dir "intake2.rkt")
+  (lambda () (display (string-replace (string-replace map-text "StructureMap/intake" "StructureMap/intake2")
+                                      "src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value) \"gender\";"
+                                      "src.item as item where linkId = 'gender' then {\n    item.answer as a -> tgt.gender = (a.value.code) \"gender\";\n  } \"items\";"))))
+(define transform2 (dynamic-require (build-path dir "intake2.rkt") 'transform))
+(define as-string (hash-set qr 'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueString "female"))))))
+(define msg4 (with-handlers ([exn:fail:user? exn-message]) (transform2 as-string #:validate (path->string (build-path dir "fsh"))) "no error"))
+(check-regexp-match #rx"intake2[.]rkt:8:[0-9]+: .*Patient[.]gender: .*[(]the rule here wrote nothing: its source matched, but `[(]a[.]value[.]code[)]` was empty for {\"valueString\":\"female\"}[)]" msg4)
+;; raco fml check says the same
+(define found (check-map/examples (ok-value (parse-fml (string-replace (file->string (build-path dir "intake2.rkt")) "#lang fml\n" "")))
+                                  (list as-string) #:profiles (profiles-from (build-path dir "fsh"))))
+(check-true (for/or ([d (in-list found)]) (regexp-match? #rx"its source matched, but `[(]a[.]value[.]code[)]` was empty" (diagnostic-message d))))
 (delete-directory/files dir)

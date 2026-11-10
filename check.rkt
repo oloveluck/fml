@@ -21,7 +21,7 @@
 (require (only-in fhir/suggest did-you-mean)
          racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
-         (only-in "transform.rkt" uses-types map-imports run-map)
+         (only-in "transform.rkt" uses-types map-imports run-map current-empty-targets)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          "schema.rkt"
          (only-in fhir/model/introspect full-field-specs)
@@ -29,7 +29,8 @@
          (only-in fhir/model/registry type-registered?)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/registry register-resources!)
-         (only-in json read-json)
+         (only-in json read-json jsexpr->string)
+         (only-in fhirpath/print fhirpath->string)
          (only-in fhir/result/result ok? ok-value))
 
 (provide (contract-out
@@ -212,10 +213,11 @@
      (cond
        [(not (ok? r)) (list (diagnostic 'fml 'check 'error (format "~a is not a FHIR resource" (example-label i)) (loc source #f #f #f #f)))]
        [else
-        (define out (with-handlers ([exn:fail? (lambda (e) e)]) (run-map m (ok-value r))))
-        (cond
-          [(exn? out) (list (diagnostic 'fml 'check 'error (format "~a: ~a" (example-label i) (exn-message out)) (loc source #f #f #f #f)))]
-          [else (validate-result m out #:profiles profiles #:source source #:label (format "~a: " (example-label i)))])]))))
+        (parameterize ([current-empty-targets (make-hasheq)])
+          (define out (with-handlers ([exn:fail? (lambda (e) e)]) (run-map m (ok-value r))))
+          (cond
+            [(exn? out) (list (diagnostic 'fml 'check 'error (format "~a: ~a" (example-label i) (exn-message out)) (loc source #f #f #f #f)))]
+            [else (validate-result m out #:profiles profiles #:source source #:label (format "~a: " (example-label i)))]))]))))
 ;; example-label : (number | name) -> string
 (define (example-label i) (if (number? i) (format "example ~a" i) i))
 
@@ -269,11 +271,29 @@
         (cond [(not elem) ""]
               [(not rule) (format " (no rule of ~a writes `~a`)" (fml-group-name entry) elem)]
               [(and (hash? out) (not (for/or ([k (in-hash-keys out)]) (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k)))))
-               (format " (the rule here wrote nothing: its source matched nothing in the input)")]
+               (define empty (and (current-empty-targets) (hash-ref (current-empty-targets) rule 'none)))
+               (if (eq? empty 'none)
+                   (format " (the rule here wrote nothing: its source matched nothing in the input)")
+                   ;; the source matched; the value expression gave nothing for what it read (a
+                   ;; `(a.value.code)` over an answer written as valueString)
+                   (format " (the rule here wrote nothing: its source matched, but ~a was empty~a)"
+                           (value-text rule)
+                           (if (hash? empty) (format " for ~a" (compact-source empty)) "")))]
               [else ""])))
     (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
                 (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)
                 (or at (loc source #f #f #f #f)))))
+
+;; value-text : target -> string   the target's value as the map writes it: `(a.value.code)`, `a`
+(define (value-text t)
+  (match (fml-target-transform t)
+    [(fml-fhirpath ast) (format "`(~a)`" (fhirpath->string ast))]
+    [(fml-var name) (format "`~a`" name)]
+    [_ "its value"]))
+;; compact-source : jsexpr -> string   the source value read, short: {"valueString": "female"}
+(define (compact-source js)
+  (define text (jsexpr->string (if (hash? js) (for/hasheq ([(k v) (in-hash js)] #:unless (memq k '(id extension))) (values k v)) js)))
+  (if (> (string-length text) 100) (string-append (substring text 0 97) "...") text))
 
 ;; target-paths : entry-group target-var -> (listof (cons element-path target))   every target's path
 ;; from the entry target, variables followed (`tgt.component as c` then `c.code` is component.code)

@@ -40,6 +40,15 @@
   (check-equal? (transform (map-named "QR2Patient") qr)
                 (hash 'resourceType "Patient" 'gender "female" 'birthDate "1980-02-03")))
 
+(test-case "the gender filter on the code system takes FHIR's codes only"
+  (define rule (cadr (regexp-match #px"`(src[.]item as item where linkId = 'gender' then [{] item[.]answer as a where value[.]system =\n'http://hl7[.]org/fhir/administrative-gender' -> tgt[.]gender = [(]a[.]value[.]code[)]; [}];)`" (file->string guide-file))))
+  (define m (string-replace (map-named "QR2Patient") "src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value.code);"
+                            (string-replace rule "\n" " ")))
+  (define (qr system) (hasheq 'resourceType "QuestionnaireResponse" 'status "completed"
+                              'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueCoding (hasheq 'system system 'code "female")))))))
+  (check-equal? (hash-ref (transform m (qr "http://hl7.org/fhir/administrative-gender")) 'gender) "female")
+  (check-false (hash-ref (transform m (qr "http://example.org/other")) 'gender #f)))
+
 (test-case "the worked example gives the Observation the text describes"
   (define response (hasheq 'resourceType "QuestionnaireResponse" 'status "completed" 'subject (hasheq 'reference "Patient/p1")
                            'item (list (hasheq 'linkId "systolic" 'answer (list (hasheq 'valueInteger 120))))))

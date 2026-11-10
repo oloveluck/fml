@@ -41,6 +41,11 @@ at the end of a rule names it. Over the QuestionnaireResponse below, the map giv
  "item": [{"linkId": "gender", "answer": [{"valueCoding": {"code": "female"}}]},
           {"linkId": "birth",  "answer": [{"valueDate": "1980-02-03"}]}]}
 ```
+`(item.answer.value.code)` copies the code whatever its code system. To take only FHIR's own gender
+codes, filter on the system:
+`src.item as item where linkId = 'gender' then { item.answer as a where value.system =
+'http://hl7.org/fhir/administrative-gender' -> tgt.gender = (a.value.code); };` — a coding from another
+system then writes nothing, and validation says so at that rule (`the rule here wrote nothing`).
 
 ## Worked example
 A blood-pressure reading from a form, as an Observation with a coded component:

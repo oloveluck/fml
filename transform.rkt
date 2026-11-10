@@ -55,6 +55,9 @@
           [run-map (-> fml-map? fhir? hash?)]
           ;; where a rule's `log(…)` goes: a procedure of the message (nowhere by default)
           [current-fml-log (parameter/c (-> string? any))]
+          ;; when a mutable hasheq: each target whose value expression came out empty, with the
+          ;; source value the rule read (validate-result says why an element was not written)
+          [current-empty-targets (parameter/c (or/c #f (and/c hash? (not/c immutable?))))]
           ;; uses-types : map -> (hash alias-or-type-name -> type symbol)   the `uses` resolved,
           ;; logical models registered along the way
           [uses-types (-> fml-map? hash?)]
@@ -97,6 +100,7 @@
        (loop (append (cdr todo) more) (cons (fml-map-url im) seen) (cons im acc))])))
 
 (define current-fml-log (make-parameter void))
+(define current-empty-targets (make-parameter #f))
 
 ;; ---- target slots -----------------------------------------------------------
 ;; A TSLOT is (tslot get set! type prim) — get/set! close over the parent so mutation propagates up
@@ -366,7 +370,10 @@
     [group (call-group c group (list typed-source slot) sc)]
     [tr (define v (transform-value c r tr sc slot))
         (check-primitive-target! r t slot v tr)
-        (unless (eq? v 'null) ((tslot-set! slot) (coerce v (tslot-prim slot))))]
+        (if (eq? v 'null)
+            (let ([h (current-empty-targets)])         ; the rule matched; its value gave nothing
+              (when h (hash-set! h t (and (fhir? src-elem) (value->jsexpr src-elem)))))
+            ((tslot-set! slot) (coerce v (tslot-prim slot))))]
     [(and implicit? (fml-target-element t) src-elem)
      ((tslot-set! slot) (coerce (value->jsexpr src-elem) (tslot-prim slot)))]
     [else (void)])
