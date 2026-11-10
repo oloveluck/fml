@@ -176,3 +176,6 @@ guide.md shows a `#lang fml` file and the error Racket gives without the line.
 **One error for an invalid result** (2026-11-10): `transform #:validate` raises `exn:fail:operation`
 (fhir/operation; its OperationOutcome one issue per problem), as `ensure-valid` does — one handler,
 `exn:fail:operation?`, catches both (a new user's documented handler caught nothing). guide.md says so.
+
+**Prints FHIR JSON as FHIR writes it** (2026-11-10): `raco fml --transform` prints with
+`fhir/serialize/fhir-json` (`resourceType` first).

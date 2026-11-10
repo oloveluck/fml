@@ -16,6 +16,7 @@
 
 (require json
          (only-in racket/file file->string)
+         (only-in fhir/serialize/fhir-json fhir-json->string)
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap fml->structuremap structuremap->fml)
          (only-in fml/transform run-map uses-types)
@@ -85,7 +86,7 @@
                        (define d (exn:fail:diagnostic-diagnostic e))
                        (define l (diagnostic-loc d))
                        (report d (if (and l (equal? (loc-source l) file)) (file->string file) "")))])
-      (displayln (jsexpr->string (run-map m (ok-value r)))))))
+      (displayln (fhir-json->string (run-map m (ok-value r)))))))   ; resourceType first, as FHIR writes it
 
 ;; check-file : map-file options -> void   the static findings, then the examples validated; exit 1 on an error
 (define (check-file file opts)
