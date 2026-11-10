@@ -14,7 +14,7 @@
 ;;;   raco fml --tck                              run the vendored corpora (fhir-test-cases, matchbox, tutorial)
 ;;; Exit codes: 0 ok · 1 FML error / regression · 2 usage.
 
-(require json
+(require json racket/string
          (only-in racket/file file->string)
          (only-in fhir/serialize/fhir-json fhir-json->string)
          (only-in fml/parser/parse parse-fml)
@@ -94,24 +94,34 @@
   (define m (parse-file file))
   (define src (file->string file))
   (define structures (hash-ref opts "--structures" #f))
-  (define examples
+  ;; each example with its file, the name findings and the summary give it
+  (define example-files
     (let ([e (hash-ref opts "--examples" #f)])
       (cond [(not e) '()]
             [(directory-exists? e) (for/list ([f (in-directory e)] #:when (regexp-match? #px"\\.json$" (path->string f)))
-                                     (call-with-input-file f read-json))]
-            [else (list (call-with-input-file e read-json))])))
+                                     (path->string f))]
+            [else (list e)])))
+  (define examples (for/list ([f (in-list example-files)]) (call-with-input-file f read-json)))
   ;; a profile is a StructureDefinition file, an FSH project (its profiles), or a canonical
   (define (profiles) (append-map profiles-from (hash-ref opts "--profile" '())))
   (parameterize ([current-data-source
                   (cond [(not structures) (current-data-source)]
                         [(directory-exists? structures) (directory->data-source structures)]
                         [else (resources->data-source (list (call-with-input-file structures read-json)))])])
+    (define held (profiles))
     (define ds (append (check-map m #:source file)
-                       (if (null? examples) '() (check-map/examples m examples #:profiles (profiles) #:source file))))
+                       (if (null? examples) '() (check-map/examples m examples #:profiles held #:source file #:names example-files))))
     (emit-diagnostics ds #:format (current-format) #:text-of (lambda (_) src))
     (when (eq? (current-format) 'text)
       (eprintf "~a: ~a finding~a~a\n" file (length ds) (if (= 1 (length ds)) "" "s")
-               (if (null? examples) "" (format ", ~a example~a validated" (length examples) (if (= 1 (length examples)) "" "s")))))
+               (if (null? examples) ""
+                   ;; which examples, and what they were held to (a clean run said neither)
+                   (format ", ~a example~a validated (~a) against ~a" (length examples) (if (= 1 (length examples)) "" "s")
+                           (string-join example-files ", ")
+                           (if (null? held) "the result's base type and the profiles it claims"
+                               (string-join (for/list ([sd (in-list held)])
+                                              (format "~a (~a)" (hash-ref sd 'name "?") (hash-ref sd 'url "?")))
+                                            ", "))))))
     (when (ormap (lambda (d) (eq? (diagnostic-severity d) 'error)) ds) (exit 1))))
 
 ;; parse-corpus-dir : path-string -> void   parse every .map under dir; the failures, a count; exit 1 on any

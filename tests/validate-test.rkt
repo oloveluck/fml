@@ -76,5 +76,8 @@ FML
                        "--examples" (path->string (build-path dir "qr.json"))
                        "--profile" (path->string (build-path dir "fsh")))))
 (check-false ok?)
-(check-regexp-match #rx"example 1: Patient.birthDate: .*no rule of main writes `birthDate`" (get-output-string out))
+;; each example named by its file, and the summary says what the results were held to (a clean run
+;; said "1 example validated" and nothing of the profile)
+(check-regexp-match #rx"qr[.]json: Patient.birthDate: .*no rule of main writes `birthDate`" (get-output-string out))
+(check-regexp-match #rx"1 example validated [(][^)]*qr[.]json[)] against IntakePatient [(]http://[^)]*[)]" (get-output-string out))
 (delete-directory/files dir)

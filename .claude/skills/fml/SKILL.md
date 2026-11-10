@@ -28,9 +28,11 @@ example, what the checker reports, and the common problems (that guide is what f
    target structure and the profile (a StructureDefinition file, an FSH project directory, or a
    canonical); a problem is traced to the rule that wrote the element, or says no rule writes it:
    ```
-   nocode.map: fml validate error: example 1: Observation.code: minimum required = 1, but found 0 (no rule of main writes `code`)
-   nocode.map: 2 findings, 1 example validated
+   nocode.map: fml validate error: ex/obs.json: Observation.code: minimum required = 1, but found 0 (no rule of main writes `code`)
+   nocode.map: 2 findings, 1 example validated (ex/obs.json) against the result's base type and the profiles it claims
    ```
+   Each example is named by its file, and the last line says what the results were held to — with
+   `--profile`, the profile by name and url (`against IntakePatient (http://…)`).
    From Racket, a `#lang fml` module's `(transform src #:validate "fsh/")` raises the same way.
 4. **Narrow it down.** A target element missing from the result means its rule's source matched
    nothing: transform once with the rule's `where` removed, or split the rule, and compare.

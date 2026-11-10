@@ -44,7 +44,8 @@
           ;; profiles-from : spec -> (listof StructureDefinition)   a JSON file, an FSH project (a
           ;; directory or a .fsh file: its profiles, its definitions registered), a canonical
           [profiles-from (-> (or/c string? path? hash?) (listof hash?))]
-          [check-map/examples (->* (fml-map? (listof hash?)) (#:profiles (listof hash?) #:source (or/c string? path? #f))
+          [check-map/examples (->* (fml-map? (listof hash?)) (#:profiles (listof hash?) #:source (or/c string? path? #f)
+                                                              #:names (or/c #f (listof string?)))
                                    (listof diagnostic?))]))
 
 ;; Types are fml/schema's: a Ty is a registered type symbol, (prim code), or #f (unknown: nothing to
@@ -200,19 +201,23 @@
   (dynamic-require 'fhir/conformance/validate name
                    (lambda () (error 'check-map/examples "validating needs the fhir-validation package: raco pkg install fhir-validation"))))
 
-(define (check-map/examples m examples #:profiles [profiles '()] #:source [source #f])
+;; #:names: what each example is called in a finding (its file, `qr.json`), else `example i`
+(define (check-map/examples m examples #:profiles [profiles '()] #:source [source #f] #:names [names #f])
   (dynamic-require 'fhir/r5/schemas #f)
   (uses-types m)
   (append*
-   (for/list ([ex (in-list examples)] [i (in-naturals 1)])
+   (for/list ([ex (in-list examples)] [n (in-naturals 1)])
+     (define i (if names (list-ref names (sub1 n)) n))
      (define r (from-json ex #:lenient? #t))
      (cond
-       [(not (ok? r)) (list (diagnostic 'fml 'check 'error (format "example ~a is not a FHIR resource" i) (loc source #f #f #f #f)))]
+       [(not (ok? r)) (list (diagnostic 'fml 'check 'error (format "~a is not a FHIR resource" (example-label i)) (loc source #f #f #f #f)))]
        [else
         (define out (with-handlers ([exn:fail? (lambda (e) e)]) (run-map m (ok-value r))))
         (cond
-          [(exn? out) (list (diagnostic 'fml 'check 'error (format "example ~a: ~a" i (exn-message out)) (loc source #f #f #f #f)))]
-          [else (validate-result m out #:profiles profiles #:source source #:label (format "example ~a: " i))])]))))
+          [(exn? out) (list (diagnostic 'fml 'check 'error (format "~a: ~a" (example-label i) (exn-message out)) (loc source #f #f #f #f)))]
+          [else (validate-result m out #:profiles profiles #:source source #:label (format "~a: " (example-label i)))])]))))
+;; example-label : (number | name) -> string
+(define (example-label i) (if (number? i) (format "example ~a" i) i))
 
 ;; profiles-from : spec -> (listof SD)   where a profile comes from, as a user names it
 (define (profiles-from spec)

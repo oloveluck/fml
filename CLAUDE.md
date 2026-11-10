@@ -184,3 +184,7 @@ guide.md shows a `#lang fml` file and the error Racket gives without the line.
 object assigned to a primitive element, at the rule, naming the part that fits (`(a.value.code)`; an empty
 `{}` — a value the lenient read dropped — is said elsewhere); a `#lang fml` module runs its positioned
 parse (`located`), so a rule error names its line. Every corpus floor holds. `tests/primitive-target-test.rkt`.
+
+**Names each example** (2026-11-10): `raco fml check --examples` names an example by its file in each
+finding and in the summary, which says what the results were held to (`against IntakePatient (url)`,
+else the base type and the profiles a result claims); `check-map/examples #:names`.
