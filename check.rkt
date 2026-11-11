@@ -18,7 +18,7 @@
 ;;; `check-map/examples` runs the map over example sources and validates each result (fhir-validation,
 ;;; loaded on demand); a validation issue is traced to the rule that wrote the element.
 
-(require (only-in fhir/suggest did-you-mean)
+(require (only-in fhir/suggest did-you-mean closest-names)
          racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
          (only-in "transform.rkt" uses-types map-imports run-map current-empty-targets)
@@ -281,7 +281,7 @@
                   (format " (the rule here wrote nothing: its source matched ~a item~a, but `where ~a` held for none~a)"
                           (caddr empty) (if (= 1 (caddr empty)) "" "s")
                           (let ([w (cadr empty)]) (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
-                          (if (hash? (cadddr empty)) (format " (the first: ~a)" (compact-source (cadddr empty))) ""))]
+                          (where-evidence (cadr empty) (cadddr empty)))]
                  [else
                    ;; the source matched; the value expression gave nothing for what it read (a
                    ;; `(a.value.code)` over an answer written as valueString)
@@ -294,6 +294,29 @@
                 (or at (loc source #f #f #f #f)))))
 
 ;; value-text : target -> string   the target's value as the map writes it: `(a.value.code)`, `a`
+;; where-evidence : where items -> string   what the items held for the field a `where` tests against a
+;; literal (`linkId = 'birthDate'`: "the linkIds there: name, gender, birth_date — did you mean
+;; 'birth_date'?"); else the first item (the first item alone, the name item, told nothing)
+(define (where-evidence w items)
+  (define text (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
+  (define tests (regexp-match* #px"([A-Za-z_][A-Za-z0-9_.]*)\\s*=\\s*'([^']*)'" text #:match-select cdr))
+  (define (field-values field)
+    (remove-duplicates
+     (for*/list ([it (in-list items)] #:when (hash? it)
+                 [v (in-value (for/fold ([v it]) ([k (in-list (string-split field "."))])
+                                (and (hash? v) (hash-ref v (string->symbol k) #f))))]
+                 #:when (or (string? v) (number? v) (boolean? v)))
+       (format "~a" v))))
+  (define said
+    (for/list ([t (in-list tests)] #:when (pair? (field-values (car t))))
+      (define vals (field-values (car t)))
+      (define near (closest-names (cadr t) vals #:limit 1))
+      (format "the ~a there: ~a~a" (car t) (string-join vals ", ")
+              (if (pair? near) (format " — did you mean '~a'?" (car near)) ""))))
+  (cond [(pair? said) (format " (~a)" (string-join said "; "))]
+        [(and (pair? items) (hash? (car items))) (format " (the first: ~a)" (compact-source (car items)))]
+        [else ""]))
+
 (define (value-text t)
   (match (fml-target-transform t)
     [(fml-fhirpath ast) (format "`(~a)`" (fhirpath->string ast))]

@@ -202,3 +202,8 @@ its nested rules) whose source matched items its `where` held for none of, the c
 item; `validate-result` says `its source matched 1 item, but `where linkId = 'gender'` held for none
 (the first: …)` instead of blaming the input.
 
+**Names what the `where` tested** (2026-11-11): `source-matches` keeps every item the source matched;
+`validate-result`'s `where-evidence` lists the values the tested field held, with the nearest to the
+literal (`held for none (the linkId there: name, gendr — did you mean 'gendr'?)`); the first item only
+when the condition compares no field to a literal.
+

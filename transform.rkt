@@ -327,7 +327,9 @@
   (when (and (fml-source-where s) (pair? base) (null? filtered) (current-empty-targets))
     (for ([t (in-list (rule-targets* r))])
       (hash-set! (current-empty-targets) t
-                 (list 'filtered (fml-source-where s) (length base) (and (fhir? (car base)) (value->jsexpr (car base)))))))
+                 ;; every item the source matched, so the message can say what the tested field held
+                 (list 'filtered (fml-source-where s) (length base)
+                       (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))))))
   (case (fml-source-list-mode s)
     [(first) (if (pair? filtered) (list (car filtered)) '())]
     [(last) (if (pair? filtered) (list (last filtered)) '())]

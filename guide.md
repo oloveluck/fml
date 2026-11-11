@@ -107,12 +107,12 @@ time (a `check` that does not hold, `only_one` over several elements, a `cast` t
 convert) is reported at its line too.
 
 ## Running it
-**Command line.** `fml` (or `raco fml`):
+**Command line.** `raco fml` (the standalone build's `fml` takes the same arguments):
 ```
-fml map.map                                        # the StructureMap, as JSON
-fml map.map --transform source.json                # run it over one (R5) resource; the target JSON
-fml map.map --transform source.json --structures sds/   # over logical models: their StructureDefinitions
-fml check map.map --structures sds/ --examples ex/ --profile profile.json   # check; transform and validate
+raco fml map.map                                   # the StructureMap, as JSON
+raco fml map.map --transform source.json           # run it over one (R5) resource; the target JSON
+raco fml map.map --transform source.json --structures sds/   # over logical models: their StructureDefinitions
+raco fml check map.map --structures sds/ --examples ex/ --profile profile.json   # check; transform and validate
 ```
 `--profile` is a StructureDefinition file, an FSH project (a directory or a `.fsh` file: its
 profiles, and its other definitions in context), or a canonical the packages define; a profile
