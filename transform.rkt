@@ -329,7 +329,8 @@
       (hash-set! (current-empty-targets) t
                  ;; every item the source matched, so the message can say what the tested field held
                  (list 'filtered (fml-source-where s) (length base)
-                       (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))))))
+                       (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))
+                       r))))   ; the rule whose `where` it is: the problem is said at its line
   (case (fml-source-list-mode s)
     [(first) (if (pair? filtered) (list (car filtered)) '())]
     [(last) (if (pair? filtered) (list (last filtered)) '())]

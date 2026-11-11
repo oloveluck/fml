@@ -289,9 +289,14 @@
                            (value-text rule)
                            (if (hash? empty) (format " for ~a" (compact-source empty)) ""))])]
               [else ""])))
+    ;; a `where` that held for none is said at the rule that has it (the fix is there), not at the
+    ;; nested rule that would have written the element
+    (define where-rule
+      (let ([e (and rule (current-empty-targets) (hash-ref (current-empty-targets) rule #f))])
+        (and (pair? e) (eq? (car e) 'filtered) (>= (length e) 5) (list-ref e 4))))
     (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
                 (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)
-                (or at (loc source #f #f #f #f)))))
+                (or (and where-rule (attached-loc where-rule)) at (loc source #f #f #f #f)))))
 
 ;; value-text : target -> string   the target's value as the map writes it: `(a.value.code)`, `a`
 ;; where-evidence : where items -> string   what the items held for the field a `where` tests against a

@@ -53,6 +53,22 @@ FML
 (define other-item (hash-set qr 'item (list (hasheq 'linkId "sex" 'answer (list (hasheq 'valueString "female"))))))
 (define msg2b (with-handlers ([exn:fail:user? exn-message]) (transform other-item #:validate (path->string (build-path dir "fsh"))) "no error"))
 (check-regexp-match #rx"Patient[.]gender: .*[(]the rule here wrote nothing: its source matched 1 item, but `where linkId = 'gender'` held for none [(]the linkId there: sex[)][)]" msg2b)
+;; the `where` of an outer rule held for none: said at that rule's line (7), where the fix is, not at
+;; the nested rule that would have written birthDate (8) — a rerun's agent edited the wrong line
+(with-output-to-file (build-path dir "nested.rkt")
+  (lambda () (display (string-append "#lang fml\nmap \"http://example.org/StructureMap/nested\" = \"Nested\"\n"
+                                     "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" as source\n"
+                                     "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" as target\n\n"
+                                     "group main(source src : QuestionnaireResponse, target tgt : Patient) {\n"
+                                     "  src.item as item where linkId = 'birthDate' then {\n"
+                                     "    item.answer as a -> tgt.birthDate = (a.value) \"birth\";\n"
+                                     "  } \"birthItem\";\n}\n"))))
+(define nested (dynamic-require (build-path dir "nested.rkt") 'transform))
+(define msg-n (with-handlers ([exn:fail:user? exn-message])
+                (nested (hash-set qr 'item (list (hasheq 'linkId "birthdate" 'answer (list (hasheq 'valueDate "1950-05-01")))))
+                        #:validate (path->string (build-path dir "fsh")))
+                "no error"))
+(check-regexp-match #rx"nested[.]rkt:7:[0-9]+: .*Patient[.]birthDate: .*`where linkId = 'birthDate'` held for none" msg-n)
 ;; … and the value the `where` most likely meant (an agent's `birth_date` item showed only the first
 ;; item, the name)
 (define near-item (hash-set qr 'item (list (hasheq 'linkId "name" 'answer (list (hasheq 'valueString "Ana")))

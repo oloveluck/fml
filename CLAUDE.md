@@ -207,3 +207,7 @@ item; `validate-result` says `its source matched 1 item, but `where linkId = 'ge
 literal (`held for none (the linkId there: name, gendr — did you mean 'gendr'?)`); the first item only
 when the condition compares no field to a literal.
 
+
+**Says a `where` at its own line** (2026-11-11): the `filtered` record `source-matches` keeps carries the
+rule whose `where` held for none; `validate-result` positions the problem there (the fix is there), not
+at the nested rule that would have written the element. `tests/validate-test.rkt`.
