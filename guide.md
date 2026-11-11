@@ -46,6 +46,9 @@ codes, filter on the system:
 `src.item as item where linkId = 'gender' then { item.answer as a where value.system =
 'http://hl7.org/fhir/administrative-gender' -> tgt.gender = (a.value.code); };` — a coding from another
 system then writes nothing, and validation says so at that rule (`the rule here wrote nothing`).
+A form that answers gender as text (`{"valueString": "female"}`) takes the value itself:
+`src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value);` — the coded rule over a
+text answer writes nothing, and the error says `(a.value.code)` was empty for `{"valueString":"female"}`.
 
 ## Worked example
 A blood-pressure reading from a form, as an Observation with a coded component:
