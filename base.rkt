@@ -12,6 +12,7 @@
          (only-in fhir/registry register-resources!)
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
+         (only-in fhir/serialize/fhir-json write-fhir-json)
          (only-in fhir/serialize/lenient lenient-drops drop->string)
          (only-in racket/string string-join string-replace)
          (only-in fhir/result/result ok? ok-value)
@@ -142,4 +143,4 @@
                                (if (fhir? src) '() (lenient-drops src node))))
               out)))
         (provide fml structuremap transform)
-        (module+ main (displayln (jsexpr->string structuremap))))]))
+        (module+ main (write-fhir-json structuremap #:indent 2) (newline)))]))
