@@ -47,6 +47,12 @@ FML
 (define no-gender (hash-set qr 'item '()))
 (define msg2 (with-handlers ([exn:fail:user? exn-message]) (transform no-gender #:validate (path->string (build-path dir "fsh"))) "no error"))
 (check-regexp-match #rx"intake[.]rkt:7:[0-9]+: .*Patient[.]gender: .*[(]the rule here wrote nothing: its source matched nothing in the input[)]" msg2)
+;; the source matched, but the rule's `where` held for none of it (a gender answered under another
+;; linkId, or a `where value.system = …` over an answer written as text): said with the filter and the
+;; first item — "its source matched nothing in the input" blamed the input
+(define other-item (hash-set qr 'item (list (hasheq 'linkId "sex" 'answer (list (hasheq 'valueString "female"))))))
+(define msg2b (with-handlers ([exn:fail:user? exn-message]) (transform other-item #:validate (path->string (build-path dir "fsh"))) "no error"))
+(check-regexp-match #rx"Patient[.]gender: .*[(]the rule here wrote nothing: its source matched 1 item, but `where linkId = 'gender'` held for none [(]the first: [{].*\"linkId\":\"sex\"" msg2b)
 ;; the item is there but its value cannot be read (a Coding written as a string): the message says
 ;; the read dropped it, where "matched nothing" sent the user looking for a missing item
 (define unreadable (hash-set qr 'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueCoding "female"))))))

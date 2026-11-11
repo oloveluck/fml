@@ -272,13 +272,22 @@
               [(not rule) (format " (no rule of ~a writes `~a`)" (fml-group-name entry) elem)]
               [(and (hash? out) (not (for/or ([k (in-hash-keys out)]) (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k)))))
                (define empty (and (current-empty-targets) (hash-ref (current-empty-targets) rule 'none)))
-               (if (eq? empty 'none)
-                   (format " (the rule here wrote nothing: its source matched nothing in the input)")
+               (cond
+                 [(eq? empty 'none)
+                  (format " (the rule here wrote nothing: its source matched nothing in the input)")]
+                 ;; the source matched, but a `where` held for none of it (the gender answer was there,
+                 ;; as a valueString, and `where value.system = …` dropped it)
+                 [(and (pair? empty) (eq? (car empty) 'filtered))
+                  (format " (the rule here wrote nothing: its source matched ~a item~a, but `where ~a` held for none~a)"
+                          (caddr empty) (if (= 1 (caddr empty)) "" "s")
+                          (let ([w (cadr empty)]) (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
+                          (if (hash? (cadddr empty)) (format " (the first: ~a)" (compact-source (cadddr empty))) ""))]
+                 [else
                    ;; the source matched; the value expression gave nothing for what it read (a
                    ;; `(a.value.code)` over an answer written as valueString)
                    (format " (the rule here wrote nothing: its source matched, but ~a was empty~a)"
                            (value-text rule)
-                           (if (hash? empty) (format " for ~a" (compact-source empty)) "")))]
+                           (if (hash? empty) (format " for ~a" (compact-source empty)) ""))])]
               [else ""])))
     (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
                 (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)

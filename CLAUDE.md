@@ -196,3 +196,9 @@ wrote nothing: its source matched, but `(a.value.code)` was empty for {"valueStr
 of "its source matched nothing in the input". guide.md filters gender by its code system, tested.
 
 **Prints indented on request** (2026-11-10): `raco fml <map> --transform <src> --indent`.
+
+**Says when a `where` dropped it** (2026-11-11): `source-matches` records, for the targets of a rule (and
+its nested rules) whose source matched items its `where` held for none of, the condition and the first
+item; `validate-result` says `its source matched 1 item, but `where linkId = 'gender'` held for none
+(the first: …)` instead of blaming the input.
+

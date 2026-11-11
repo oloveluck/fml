@@ -302,6 +302,10 @@
   (for ([call (in-list (fml-rule-dependents r))]) (run-call c call sc2))
   (for ([nr (in-list (fml-rule-nested r))]) (run-rule c nr sc2)))
 
+;; rule-targets* : rule -> (listof target)   the rule's targets and its nested rules', all the way down
+(define (rule-targets* r)
+  (append (fml-rule-targets r) (append-map rule-targets* (fml-rule-nested r))))
+
 ;; the elements a source clause matches: the context itself when no element; else each child,
 ;; where-filtered, in the clause's list mode
 (define (source-matches c r s sc)
@@ -318,6 +322,12 @@
     (if (fml-source-where s)
         (filter (lambda (e) (fp-true? (fml-source-where s) e (with-candidate e))) base)
         base))
+  ;; the source matched, and its `where` held for none: said at the targets this rule (and its nested
+  ;; rules) would have written (the message blamed the input: "its source matched nothing")
+  (when (and (fml-source-where s) (pair? base) (null? filtered) (current-empty-targets))
+    (for ([t (in-list (rule-targets* r))])
+      (hash-set! (current-empty-targets) t
+                 (list 'filtered (fml-source-where s) (length base) (and (fhir? (car base)) (value->jsexpr (car base)))))))
   (case (fml-source-list-mode s)
     [(first) (if (pair? filtered) (list (car filtered)) '())]
     [(last) (if (pair? filtered) (list (last filtered)) '())]
