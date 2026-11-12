@@ -211,3 +211,7 @@ when the condition compares no field to a literal.
 **Says a `where` at its own line** (2026-11-11): the `filtered` record `source-matches` keeps carries the
 rule whose `where` held for none; `validate-result` positions the problem there (the fix is there), not
 at the nested rule that would have written the element. `tests/validate-test.rkt`.
+
+**Says why a date is unread** (2026-11-12): the lenient-read warning comes from `fhir/serialize/lenient`'s
+`drops-message` — a date its month lacks gets the calendar's reason (`is no date: February 1990 has 28
+days`), anything else the old wording. `tests/drops-test.rkt`.

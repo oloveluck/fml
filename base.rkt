@@ -13,7 +13,7 @@
          (only-in fhir/data-source current-data-source data-source? resources->data-source)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/serialize/fhir-json write-fhir-json)
-         (only-in fhir/serialize/lenient lenient-drops drop->string)
+         (only-in fhir/serialize/lenient lenient-drops drop->string drops-message)
          (only-in racket/string string-join string-replace)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?)
@@ -98,8 +98,7 @@
 (define (report-drops! src node strict?)
   (define drops (lenient-drops src node))
   (unless (null? drops)
-    (define msg (format "the source's ~a not read: not a valid value, or not an element of ~a in FHIR R5"
-                        (string-join (map drop->string drops) ", ") (hash-ref src 'resourceType "its type")))
+    (define msg (format "the source's ~a" (drops-message drops (hash-ref src 'resourceType "its type"))))
     (if strict?
         (raise (exn:fail (string-append "transform: " msg) (current-continuation-marks)))
         (eprintf "fml warning: ~a\n" msg))))

@@ -31,4 +31,8 @@
 (check-regexp-match #rx"item\\[0\\][.]answer\\[0\\][.]valueDate [(]\"01/05/1950\"[)] not read" (get-output-string warned))
 ;; strict: an error
 (check-exn #rx"transform: the source's item\\[0\\][.]answer\\[0\\][.]valueDate" (lambda () (transform (qr "01/05/1950") #:strict? #t)))
+;; a date its month lacks says so, as the validator does (it said "not a valid value, or not an element")
+(define cal (open-output-string))
+(void (parameterize ([current-error-port cal]) (transform (qr "1990-02-30"))))
+(check-regexp-match #rx"valueDate [(]\"1990-02-30\"[)] is no date: February 1990 has 28 days" (get-output-string cal))
 (delete-directory/files dir)

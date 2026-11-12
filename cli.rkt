@@ -27,7 +27,7 @@
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc loc-source emit-diagnostics format-flag
                   exn:fail:diagnostic? exn:fail:diagnostic-diagnostic)
          (only-in fhir/serialize/from-json from-json)
-         (only-in fhir/serialize/lenient lenient-drops drop->string)
+         (only-in fhir/serialize/lenient lenient-drops drop->string drops-message)
          (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
 
@@ -77,9 +77,9 @@
     (define r (from-json src #:lenient? #t))
     (unless (ok? r) (eprintf "~a: ~a\n" src-file (validation-error-message (err-error r))) (exit 1))
     ;; what the lenient read left out is said: the map never sees it
-    (for ([d (in-list (lenient-drops src (ok-value r)))])
-      (eprintf "~a: warning: ~a not read: not a valid value, or not an element of ~a in FHIR R5\n"
-               src-file (drop->string d) (hash-ref src 'resourceType "its type")))
+    (let ([drops (lenient-drops src (ok-value r))])
+      (unless (null? drops)
+        (eprintf "~a: warning: ~a\n" src-file (drops-message drops (hash-ref src 'resourceType "its type")))))
     ;; a run-time error (a check, a source of the wrong type, ...) is a diagnostic at its rule or group
     (with-handlers ([exn:fail:diagnostic?
                      (lambda (e)
