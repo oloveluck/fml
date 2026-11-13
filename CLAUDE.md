@@ -83,8 +83,9 @@ ConceptMap), `map-imports`; a group is found in the map or any map it imports, t
 `smap-target` from the entry group's parameters and `uses`), `compose-maps` checks the types;
 `$transform` takes `source` (canonical) and `sourceMap` (resource) besides `srcMap`. Oracles: the
 tutorial run from OUR emitted StructureMaps by canonical (37/37); from the REFERENCE's `map/*.json`
-(30/37 — several of those resources predate their .map: stale conditions, a missing rule; named,
-floor 30); our StructureMap vs the reference's rule by rule, names/documentation/R4-isms normalised
+(29/37 — several of those resources predate their .map: stale conditions, a missing rule; named,
+floor 29: it was 30 until conditions were read by FHIRPath's singleton evaluation, see the pass of
+2026-11-13 below); our StructureMap vs the reference's rule by rule, names/documentation/R4-isms normalised
 (21/31; the rest are stale conditions and the reference's synthetic variables).
 `check.rkt` (`raco fml check`, `check-map`, `check-map/examples`): rules, sources, targets and groups
 remember their positions (parse.rkt keeps brag's syntax, `syntax->datum/locs`, `attach-loc!`); the
@@ -275,3 +276,89 @@ types when no FHIR version is registered (as the `#lang fml` reader does). In th
 process none is, so `check-map` knew no type and a map writing `tgt.gendr` had no finding in the
 editor or from `raco fhir-lsp check` (found running the manual's editor configurations in Neovim).
 
+**Quality, performance and specification pass** (2026-11-13; `tests/alignment-test.rkt`, 75 checks,
+each failing without its change). Held to a dump of everything the package produces over its corpora
+(each map's StructureMap, text and findings; every tutorial map over every source of its step, from
+the FML, from our StructureMap and from the reference's; the matchbox maps over six sources; the
+guide's examples — 2,166 lines) and over the 332 inter-version maps (17,360 lines): identical after
+each refactoring, every other difference one of the changes below. Tests 234 -> 318.
+- **Quality** (no behaviour change). An EmptyReason is data: `empty-value` | `empty-where` structs
+  (transform.rkt; it was a tagged list read with `caddr`/`list-ref`), recorded by `note-empty!`;
+  `validate-result` is a `match` on it through `unwritten-note`/`nothing-written` (check.rkt; a
+  90-line body). One walk shape for the FHIRPath AST (`fp-parts`, `fp-map`: `free-names`,
+  `rewrite-vars` and `strip-value-steps` were three copies of the same recursion). `source-matches`
+  is its steps (`source-values`, `check-cardinality!`, `in-list-mode`); `translate` its two lookups.
+  One definition each: `run-error` (every failure of a run; `rule-error` names the rule),
+  `group-param`, `url-leaf` and fhir/canonical's `canonical-url` (five spellings of "the type a url
+  names"), `structures-source` and `resource-node` (registry.rkt: base.rkt, cli.rkt twice and
+  registry.rkt each built the data source of `--structures`), `loc-of` (parse.rkt), `parameters`
+  and `argument` (structuremap.rkt: a transform's and a group invocation's arguments cross the
+  same way). `target-paths` is a fold (it `set!` an accumulator); `child-slot!` lost a box; the
+  checker computes the unresolved imports once (`cx-unresolved`); unused requires dropped.
+- **Defects found on the way**, each real and none reported before:
+  a date, dateTime or time literal in a map carried a syntax object (`syntax->datum/locs` took
+  `syntax-e` of a struct token): the StructureMap said `@#<syntax …>` and the expression evaluated
+  to nothing, silently. On a file with Windows line ends every specification note quoted text from
+  some lines up (`` `where then {` ``), and parenthesized conditions were flagged: a position
+  counts `\r\n` as one character — all 332 inter-version maps and several tutorial maps are such
+  files (`parse-fml` reads positions against the text with `\n` line ends). `(a+1)` did not parse
+  (the lexer took `a+` as a name, for the flag `type+`: `type` is a keyword now, usable as a name).
+  A parenthesized call — `= (now())`, `= (iif(a, b, c))` — was read as a transform of that name,
+  which there is not (`in-parentheses?`, from the datum: parentheses are FHIRPath). `<<any words>>`
+  was read as a type mode and dropped; a cardinality `1.5..2` was read (both parse errors now).
+  `uuid()` wrote `"parameter": []`, which is not FHIR JSON. A `uses …|version as target` with an
+  untyped target parameter found no target type. A group called with the wrong number of
+  arguments, a constant defined by itself and an undeterminable target type were plain `error`s.
+- **The specification's transforms** (its table is the code system `http://hl7.org/fhir/map-transform`;
+  hl7.org was not reachable from this session, the definitions were read from the R5 core
+  package): `escape(source, fmt1, fmt2)` between plain, java, xml and json (`escapings`, a table of
+  read/write pairs); `pointer(resource)` — `urn:uuid:<id>`, as the reference implementation writes
+  it; `cast(source)` with the target element's own type ("Target type can be left as implicit");
+  `reference`/`pointer` of a resource being built give it a random id when it has none
+  (`resource-identity`; it wrote `Basic/`), of a source without an id an error (it wrote
+  `Patient/#f`), of an element an error; `cp(value)` infers the system from the value
+  (`contact-system`); `id(…, type)` is a coding of the identifier-type code system (it was
+  `type.text`). `dateOp` stays out: the specification says "Parameters to be documented" and the
+  reference implementation does not run it.
+- **The engine.** A `where`/`check` is read as FHIRPath reads a collection where a Boolean is
+  expected (`fp-true?`: one Boolean is its value, one other item is true, nothing or several is
+  not): every condition not exactly `true` was false, so matchbox's
+  `where $this.resource.ofType(FHIR.Patient)` maps (copyaliasingbug, bundle-resolve, bundleobs) ran
+  and wrote nothing. What is created into an element of an abstract type has its own type's shape
+  (`narrowed`: a Patient created into `Bundle.entry.resource` had a `name` that did not repeat). An
+  expression's value picks a choice element's key as a variable's does (`tgt.deceased = (d - 5
+  days)` wrote the key `deceased`; qr2patfordates.map).
+- **The StructureMap.** A group invocation's parameters are typed as a transform's (`valueId`, a
+  string's own text as `valueString`, `valueInteger`; it wrote FHIRPath text: `"'lit'"`); R4's
+  `dependent.variable` is read (the call lost its arguments — this file said it was); the
+  reference's form of the simple rule (`source.variable` = `target.variable`, `create` of nothing)
+  is read as the simple rule (run as written it copied nothing); an `evaluate` of one string
+  literal is that literal (HL7's own supplyrequest-transform example did not print to the same map;
+  the eight StructureMaps of the R4/R5 core packages and CRMI now hold the printer's laws,
+  `tests/print-test.rkt`).
+- **Read beyond the specification, now said** (`specification-notes`): an expression as a transform
+  without parentheses (`= a & b`), a rule's name in single quotes, an expression given to a group
+  (a StructureMap has no place for it). And a `uses` that names another FHIR version than the
+  registered one is a warning at its line (`check-versions`): one tower to a process, so the map
+  is checked and run against the registered version's type — it was silent.
+- **One floor went down, on purpose**: the tutorial from the reference's stale StructureMaps, 30 ->
+  29. `step4b.json`'s condition is the quoted string `'a21.isInteger()'`; it counted as a pass while
+  a non-Boolean condition was false. The reference never runs step4b. Everything else: 6/6 + 15/15,
+  43/43, 17/17, 37/37 (both ways), 58/58 round trip, 21/31, 55/58, 58/58 + 25/25 printed, 332/332.
+- **Performance.** Measured, same machine, best of 3: parsing is what costs (58 corpus maps 252 ms,
+  4.3 ms a map, brag's parser; unchanged), a run is 11–130 µs, a check ~0.1 ms after the
+  foundation's package index is loaded once (~1 s, when a `uses` or `imports` is not registered).
+  `raco fml --tck` 3.9 -> 3.1 s: 82% of it was `parse-fml` — nine checks each parsed the same files
+  — and the harness parses a file once (`parse-map-file`). The sampling profiler put a third of a
+  run in `regexp-split` under `uses-types`; timed directly `uses-types` is 1 µs a call and replacing
+  the regexps changed nothing measurable (kept as the cleanup it is). Left alone: FHIRPath's
+  static pass runs on every evaluation (~14% of a run; caching it by type is unsafe while a
+  logical model can be registered again under the same name), and the `#lang fml` module's second
+  parse for positions (once per process, ~5 ms).
+- **Left, named.** How the specification's text encodes the simple form in a StructureMap could
+  not be read offline; we read the reference's encoding and still write a source and a target
+  with no variable and no transform — writing the reference's is one clause in `rule->jsexpr`.
+  Our StructureMap against the reference's stays 21/31: nine are its stale conditions or missing
+  rules, one that encoding. A map pinned to another FHIR version needs two towers in one process
+  (the foundation registers types by name). The formal grammar wants two parameters to a group;
+  one is read (the StructureMap allows it) and not remarked on.
