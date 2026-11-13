@@ -46,7 +46,7 @@ jobs:
           raco fml --parse-corpus /tmp/interversion/r4
       - name: Build the documentation
         run: |
-          raco scribble +m --html --dest site --dest-name index.html --redirect-main https://docs.racket-lang.org/ scribblings/fml.scrbl
+          raco scribble +m --html --dest site --dest-name index.html --redirect-main https://docs.racket-lang.org/ ++style scribblings/manual.css scribblings/fml.scrbl
       # Publish: the built site goes to the gh-pages branch, which GitHub serves as the Pages site
       # (enabled automatically for a public repository; otherwise choose "Deploy from a branch:
       # gh-pages" once under Settings > Pages).
