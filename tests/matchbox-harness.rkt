@@ -85,9 +85,17 @@
   (sort (for/list ([f (in-directory dir)] #:when (regexp-match? #px"\\.map$" (path->string f))) f)
         string<? #:key path->string))
 
+;; parse-map-file : file [source-name] -> (ok fml-map) | (err …)   each corpus file parsed once per
+;; name its positions carry: nine checks read the same maps, and parsing was 82% of the whole run
+;; (a parsed map is not changed by running, checking or printing it)
+(define parsed-files (make-hash))
+(define (parse-map-file f [source #f])
+  (hash-ref! parsed-files (cons (path->string (simple-form-path f)) source)
+             (lambda () (parse-fml (file->string f) #:source source))))
+
 (define (parse-corpus dir)
   (run-cases (map-files dir) (relative-to dir)
-             (lambda (f) (let ([r (parse-fml (file->string f))]) (if (ok? r) 'pass (format "parse: ~a" (err-error r)))))))
+             (lambda (f) (let ([r (parse-map-file f)]) (if (ok? r) 'pass (format "parse: ~a" (err-error r)))))))
 
 ;; ---- tutorial ---------------------------------------------------------------
 (define (read-json-file f) (call-with-input-file f read-json))
@@ -106,7 +114,7 @@
 (define (roundtrip-corpus dir)
   (run-cases (map-files dir) (relative-to dir)
              (lambda (f)
-               (define r (parse-fml (file->string f)))
+               (define r (parse-map-file f))
                (cond [(not (ok? r)) 'skip]                                   ; parse failures are counted elsewhere
                      [(equal? (ast-key (structuremap->fml (fml->structuremap (ok-value r)))) (ast-key (ok-value r))) 'pass]
                      [else "read back differs from the parsed map"]))))
@@ -130,7 +138,7 @@
 (define (print-corpus dir)
   (run-cases (map-files dir) (relative-to dir)
              (lambda (f)
-               (define r (parse-fml (file->string f)))
+               (define r (parse-map-file f))
                (if (ok? r) (printed-outcome (ok-value r)) 'skip))))       ; parse failures are counted elsewhere
 
 (define (print-structuremaps dir)
@@ -154,7 +162,7 @@
   (run-cases (map-files dir) (relative-to dir)
              (lambda (f)
                (define name ((relative-to dir) f))
-               (define r (parse-fml (file->string f) #:source name))
+               (define r (parse-map-file f name))
                (cond
                  [(not (ok? r)) 'skip]
                  [else
@@ -195,7 +203,7 @@
   (define (rules sm) (append-map (lambda (g) (hash-ref g 'rule '())) (hash-ref sm 'group '())))
   (define cases
     (for*/list ([f (in-list pairs)]
-                [r (in-value (parse-fml (file->string f)))] #:when (ok? r)
+                [r (in-value (parse-map-file f))] #:when (ok? r)
                 [ours (in-value (rules (normalise-sm (fml->structuremap (ok-value r)))))]
                 [theirs (in-value (rules (normalise-sm (read-json-file (path-replace-extension f #".json")))))]
                 [i (in-range (max (length ours) (length theirs)))])
@@ -238,7 +246,7 @@
 ;; a map loader : map-file sds -> (values fml-map extra-resources)   the FML file, or the reference's
 ;; StructureMap next to it resolved by its canonical from the data source
 (define (map-from-file map-file sds)
-  (define mr (parse-fml (file->string map-file)))
+  (define mr (parse-map-file map-file))
   (unless (ok? mr) (error 'parse "~a" (err-error mr)))
   (values (ok-value mr) '()))
 (define (map-from-structuremap map-file sds)

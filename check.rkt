@@ -24,14 +24,14 @@
          racket/contract racket/list racket/string racket/match
          (only-in fhir/serialize/lenient lenient-drops drop->string)
          "parser/ast.rkt"
-         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map group-param
+         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map group-param url-leaf
                   current-empty-targets empty-where empty-where? empty-where-rule empty-value)
          (only-in "parser/parse.rkt" specification-notes)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          "schema.rkt"
          (only-in fhir/model/introspect full-field-specs)
          (only-in fhir/model/schema field-spec? fs-name fs-min)
-         (only-in fhir/model/registry type-registered?)
+         (only-in fhir/model/registry type-registered? type-spec-of fhir-spec-url)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/registry register-resources!)
          (only-in json read-json jsexpr->string)
@@ -61,19 +61,21 @@
 ;; ---- the walk -------------------------------------------------------------------
 ;; A Binding is (binding mode ty): what a variable names — mode 'source | 'target, ty a Ty
 ;; A Scope is (hash name -> Binding)
-;; A Cx is (cx types groups map at): the `uses` resolved to type symbols, every callable group (this
-;; map's and its imports'), the map, and `at` : node -> loc (where a finding points)
+;; A Cx is (cx types groups map unresolved at): the `uses` resolved to type symbols, every callable
+;; group (this map's and its imports'), the map, the imports nothing resolves (urls), and
+;; `at` : node -> loc (where a finding points)
 ;; Every check is a function of the data it checks, returning the findings (listof diagnostic) — a
 ;; binding step returns (values scope findings).
 (struct binding (mode ty) #:transparent)
-(struct cx (types groups map at))
+(struct cx (types groups map unresolved at))
 
 (define (check-map m #:source [source #f])
   (define fallback (loc (and source (if (path? source) (path->string source) source)) #f #f #f #f))
-  (define c (cx (uses-types m) (append-map fml-map-groups (map-imports m)) m
+  (define c (cx (uses-types m) (append-map fml-map-groups (map-imports m)) m (unresolved-imports m)
                 (lambda (node) (or (attached-loc node) fallback))))
   (append (append-map (lambda (g) (check-group c g)) (fml-map-groups m))
           (check-imports c)
+          (check-versions c)
           (check-required c)
           (specification-notes m)))                    ; what the text wrote beyond the specified language
 
@@ -81,9 +83,42 @@
 ;; unknown here, so a call to a group this map lacks cannot be told from a misspelt one (such a map
 ;; checked clean, whatever group it called)
 (define (check-imports c)
-  (for/list ([u (in-list (unresolved-imports (cx-map c)))])
+  (for/list ([u (in-list (cx-unresolved c))])
     (finding c (cx-map c) 'warning
              "imports ~s: no StructureMap with that url was found (check it with the map beside it, or its package): calls to groups this map does not define are not checked" u)))
+
+;; check-versions : cx -> (listof diagnostic)   a `uses` that names another FHIR version than the
+;; types this process has (a `|4.0.1` pin; the inter-version form `http://hl7.org/fhir/3.0/…`) is
+;; said, once each: the map is checked and run against the registered version's type of that
+;; name — one FHIR version to a process — so an element that version renamed or dropped is
+;; reported (and read) as missing
+(define (check-versions c)
+  (define here (registered-fhir-version))
+  (for*/list ([u (in-list (fml-map-uses (cx-map c)))]
+              [named (in-value (use-fhir-version (fml-use-url u)))]
+              #:when (and here named (not (equal? named here))
+                          (type-registered? (string->symbol (url-leaf (fml-use-url u))))))
+    (finding c (cx-map c) 'warning
+             "uses ~s names FHIR ~a: here ~a is FHIR ~a's (one FHIR version to a process), and the map is checked and run against that"
+             (fml-use-url u) named (url-leaf (fml-use-url u)) here)))
+
+;; registered-fhir-version : -> "R4" | "R5" | … | #f   the version of the registered core types
+;; (their specification urls say: https://hl7.org/fhir/R5/patient.html)
+(define (registered-fhir-version)
+  (define spec (type-spec-of 'Patient))
+  (cond [(and spec (regexp-match #px"/fhir/(R[0-9]+[A-Z]?)/" (fhir-spec-url spec))) => cadr]
+        [else #f]))
+;; use-fhir-version : url -> "R4" | … | #f   the FHIR version a `uses` url names for a core
+;; structure: a version after `|`, or between `/fhir/` and `/StructureDefinition/`
+(define (use-fhir-version url)
+  (define (release version)
+    (match (regexp-match #px"^([0-9]+)[.]([0-9]+)" version)
+      [(list _ "1" "0") "R2"] [(list _ "3" "0") "R3"] [(list _ "4" "0") "R4"] [(list _ "4" "3") "R4B"]
+      [(list _ "5" "0") "R5"] [(list _ "6" "0") "R6"] [_ #f]))
+  (match url
+    [(pregexp #px"^http://hl7[.]org/fhir/StructureDefinition/[^|]+[|](.+)$" (list _ version)) (release version)]
+    [(pregexp #px"^http://hl7[.]org/fhir/([0-9]+[.][0-9]+)/StructureDefinition/" (list _ version)) (release version)]
+    [_ #f]))
 
 (define (finding c node severity fmt . args)
   (diagnostic 'fml 'check severity (apply format fmt args) ((cx-at c) node)))
@@ -197,7 +232,7 @@
   (define g (findf (lambda (g) (equal? (fml-group-name g) (fml-call-name d))) (cx-groups c)))
   (append
    ;; decided when every import resolved (the groups in hand are all there are)
-   (cond [(and (not g) (null? (unresolved-imports (cx-map c))))
+   (cond [(and (not g) (null? (cx-unresolved c)))
           (list (finding c r 'error "no group ~a in this map~a (groups: ~a)" (fml-call-name d)
                          (if (null? (fml-map-imports (cx-map c))) "" " or the maps it imports")
                          (string-join (map fml-group-name (cx-groups c)) ", ")))]

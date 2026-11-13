@@ -53,7 +53,13 @@
                        (list "matchbox runs" (tally-passed ms) 17)
                        (list "round trip" (+ (tally-passed rt1) (tally-passed rt2)) 58)
                        (list "tutorial from our StructureMaps" (tally-passed to) 37)
-                       (list "tutorial from the reference's StructureMaps" (tally-passed ts) 30)
+                       ;; 29, not 30: step4b's stale resource has the condition `'a21.isInteger()'`, a
+                       ;; quoted string — true where a Boolean is expected (FHIRPath's singleton
+                       ;; evaluation, as the reference reads it), so its rule now copies. It counted
+                       ;; as a pass while any non-Boolean condition was false, which also kept
+                       ;; matchbox's own `where $this.resource.ofType(FHIR.Patient)` maps from
+                       ;; writing anything. The reference never runs step4b (reference-overrides).
+                       (list "tutorial from the reference's StructureMaps" (tally-passed ts) 29)
                        (list "StructureMap vs reference" (tally-passed cs) 21)
                        (list "check" (+ (tally-passed ck1) (tally-passed ck2)) 55)
                        (list "printed and read back" (+ (tally-passed pr1) (tally-passed pr2)) 58)

@@ -48,7 +48,7 @@
          (only-in fhirpath/print fhirpath->string)
          (only-in fhirpath/value item->system fp-long? fp-long-v)
          (only-in fhirpath/decimal fp-decimal? decimal->string)
-         (only-in fhirpath/temporal-ops moment? moment->string)
+         (only-in fhirpath/temporal-ops moment? moment-kind moment->string)
          (only-in fhir/serialize/to-json node->jsexpr))
 
 (provide (contract-out
@@ -160,7 +160,7 @@
             k)
           sym)))
 ;; type-name-of : value -> type name | #f   a node's type, a primitive's code, and for a plain
-;; value (a default, a constant: a FHIRPath System value) the FHIR primitive it is
+;; value (a default, a constant, an expression's result: a FHIRPath System value) the FHIR primitive it is
 (define (type-name-of v)
   (cond [(primitive-type? v) (regexp-replace #rx"^struct:fhir-" (symbol->string (vector-ref (struct->vector v) 0)) "")]
         [(fhir? v) (symbol->string (fhir-type v))]
@@ -168,14 +168,27 @@
         [(exact-integer? v) "integer"]
         [(fp-decimal? v) "decimal"]
         [(string? v) "string"]
+        [(moment? v) (case (moment-kind v) [(date) "date"] [(time) "time"] [else "dateTime"])]
         [else #f]))
+;; narrowed : declared-type|#f forced-type-name|#f -> type|#f   the type of what goes into a
+;; complex element: the type assigned (`create('Patient')`) when the element declares none the
+;; registry knows, or one the assigned type is a kind of — Bundle.entry.resource holds any
+;; resource, and the Patient created into it has a Patient's elements (its `name` repeats) — else
+;; the declared type
+(define (narrowed declared forced)
+  (define assigned (and forced (not (and declared (equal? forced (symbol->string declared)))) (type-name->ty forced)))
+  (cond [(not (symbol? assigned)) declared]
+        [(not declared) assigned]
+        [(memq declared (fhir-ancestors assigned)) assigned]
+        [else declared]))
+
 ;; child-slot! : parent elem [forced-type] -> a slot for one occurrence of parent.elem
 (define (child-slot! parent elem [forced-type #f])
   (define e (or (element-of (tslot-type parent) elem forced-type)
                 (element (string->symbol elem) #f (type-name->ty forced-type))))   ; not in the schema: open
   (define key (element-key e))
-  (define child-type (and (symbol? (element-ty e)) (element-ty e)))
   (define prim (and (prim? (element-ty e)) (prim-code (element-ty e))))
+  (define child-type (and (not prim) (narrowed (element-ty e) forced-type)))
   (cond
     [(element-list? e)
      (define h0 (as-hash ((tslot-get parent))))
@@ -245,8 +258,7 @@
     (if (and sym (fml-use-alias u)) (hash-set h1 (fml-use-alias u) sym) h1)))
 
 ;; url-leaf : canonical -> string   the last step of its path (`…/StructureDefinition/Patient|4.0.1`
-;; -> "Patient"): the name a `uses` gives its type when it has no alias. Read once per `uses` per
-;; run, so by index rather than by a regexp split (that was a third of a small map's run).
+;; -> "Patient"): the name a `uses` gives its type when it has no alias
 (define (url-leaf url)
   (define u (canonical-url url))
   (define end (let loop ([i (string-length u)]) (if (and (> i 0) (char=? (string-ref u (sub1 i)) #\/)) (loop (sub1 i)) i)))
@@ -479,8 +491,12 @@
   (unless (tslot? context) (rule-error r "target context ~a is not a target" (fml-target-context t)))
   (define tr (fml-target-transform t))
   (define src-elem (lookup sc source-key))
+  ;; an expression's value, before its element is made (it names no target): what it is decides a
+  ;; choice element's key as a variable's value does — `tgt.deceased = (d - 5 days)` is deceasedDateTime
+  (define evaluated (match tr [(fml-fhirpath ast) (fp-items ast #f sc)] [_ #f]))
   ;; the value's type decides a choice element's key (value + T)
-  (define forced-type (cond [tr (value-type tr sc)]
+  (define forced-type (cond [(pair? evaluated) (type-name-of (car evaluated))]
+                            [tr (value-type tr sc)]
                             [(and implicit? src-elem) (type-name-of src-elem)]
                             [else #f]))
   (define slot
@@ -498,7 +514,10 @@
   (define group (and (fhir? typed-source) (tslot-type slot) (types-group c (fhir-type typed-source) (tslot-type slot))))
   (cond
     [group (call-group c group (list typed-source slot) sc)]
-    [tr (define v (transform-value c r tr sc slot))
+    [tr (define v (match evaluated
+                    [#f (transform-value c r tr sc slot)]
+                    ['() 'null]
+                    [(cons first _) (item->jsexpr first)]))
         (check-primitive-target! r t slot v tr)
         (if (eq? v 'null)                               ; the rule matched; its value gave nothing
             (note-empty! t (empty-value (and (fhir? src-elem) (value->jsexpr src-elem))))
@@ -571,32 +590,65 @@
 (define (literal-arg args i)                       ; the i-th argument when it is a literal, else #f
   (and (> (length args) i) (fml-literal? (list-ref args i)) (fml-literal-value (list-ref args i))))
 
+;; resource-type? : type symbol -> boolean   a resource (its instances carry `resourceType`)
+(define (resource-type? ty)
+  (define sch (type-schema-of ty))
+  (and sch (resource-parent? (type-schema-parent sch)) #t))
+
 (define-transform "create" (lambda (args) (literal-arg args 0)) (c r args sc slot)
   (match args
-    [(list (fml-literal ty))
-     (define sch (type-schema-of (string->symbol ty)))
-     (if (and sch (resource-parent? (type-schema-parent sch))) (hash 'resourceType ty) (hash))]
+    [(list (fml-literal ty)) (if (resource-type? (string->symbol ty)) (hash 'resourceType ty) (hash))]
     ['() (hash)]
     [_ (rule-error r "create takes a type name")]))
 (define-transform "copy" #f (c r args sc slot)
   (match args [(list v) (value->jsexpr (lookup sc v))] [_ (rule-error r "copy takes one variable")]))
+;; resource-identity : rule transform-name variable-name scope -> (values type id)
+;; the type and id of the resource a variable holds, for a reference to it. A target resource being
+;; built that has no id yet is given a random UUID (as the reference implementation does: the
+;; reference then points at the resource the map writes); a source resource must have one — a
+;; reference without an id (`Patient/`) refers to nothing.
+(define (resource-identity r transform v sc)
+  (define x (lookup sc v))
+  (cond
+    [(and (fhir? x) (resource-type? (fhir-type x)))
+     (define id (pv (fhir-ref x 'id #f)))
+     (unless (string? id) (rule-error r "~a(~a): the ~a has no id to refer to" transform v (fhir-type x)))
+     (values (symbol->string (fhir-type x)) id)]
+    [(and (tslot? x) (hash? ((tslot-get x))) (hash-ref ((tslot-get x)) 'resourceType #f))
+     => (lambda (type)
+          (define js ((tslot-get x)))
+          (define id (or (let ([id (hash-ref js 'id #f)]) (and (string? id) id))
+                         (let ([id (uuid)]) ((tslot-set! x) (hash-set js 'id id)) id)))
+          (values type id))]
+    [else (rule-error r "~a() needs a resource, ~a is not one" transform v)]))
+
+;; reference(resource): the relative reference to it, `Type/id`
 (define-transform "reference" "string" (c r args sc slot)
   (match args
-    [(list v)
-     (define src (lookup sc v))
-     (cond [(fhir? src) (format "~a/~a" (fhir-type src) (pv (fhir-ref src 'id #f)))]
-           [(tslot? src) (let ([js ((tslot-get src))]) (format "~a/~a" (hash-ref js 'resourceType "") (hash-ref js 'id "")))]
-           [else (rule-error r "reference() needs a resource, ~a is not one" v)])]
+    [(list (? string? v)) (let-values ([(type id) (resource-identity r "reference" v sc)]) (format "~a/~a" type id))]
     [_ (rule-error r "reference takes one variable")]))
-(define-transform "cast" (lambda (args) (literal-arg args 1)) (c r args sc slot)
+;; pointer(resource): "the appropriate string to put in a reference that refers to the resource" —
+;; as the reference implementation writes it, the resource's id as a URN (`urn:uuid:<id>`: what a
+;; Bundle entry's fullUrl is, for a resource whose id is a UUID)
+(define-transform "pointer" "string" (c r args sc slot)
   (match args
-    [(list v (fml-literal ty))
-     (define raw (value->jsexpr (lookup sc v)))
-     (define out (coerce raw ty))
-     (when (and (string? out) (member ty '("integer" "integer64" "positiveInt" "unsignedInt" "decimal" "boolean")))
-       (rule-error r "Failed to cast ~v to type ~s" raw ty))
-     out]
-    [_ (rule-error r "cast takes a variable and a type name")]))
+    [(list (? string? v)) (let-values ([(type id) (resource-identity r "pointer" v sc)]) (string-append "urn:uuid:" id))]
+    [_ (rule-error r "pointer takes one variable")]))
+;; cast(source, type?): "Target type can be left as implicit if there is one and only one target
+;; type known" — the target element's own primitive type
+(define-transform "cast" (lambda (args) (literal-arg args 1)) (c r args sc slot)
+  (define (convert v ty)
+    (define raw (value->jsexpr (lookup sc v)))
+    (define out (coerce raw ty))
+    (when (and (string? out) (member ty '("integer" "integer64" "positiveInt" "unsignedInt" "decimal" "boolean")))
+      (rule-error r "Failed to cast ~v to type ~s" raw ty))
+    out)
+  (match args
+    [(list v (fml-literal ty)) (convert v ty)]
+    [(list v)
+     (convert v (or (and slot (tslot-prim slot))
+                    (rule-error r "cast(~a): the target's type is not known here — name it, cast(~a, 'integer')" v v)))]
+    [_ (rule-error r "cast takes a variable and optionally a type name")]))
 (define-transform "evaluate" #f (c r args sc slot)
   (match args
     [(list v (fml-fhirpath ast)) (fp-scalar-over ast (lookup sc v) sc)]
@@ -614,6 +666,55 @@
     [(list v (fml-literal map-url) (fml-literal mode)) (translate c r (value->jsexpr (lookup sc v)) map-url mode)]
     [_ (rule-error r "translate takes a variable, a concept map and a mode")]))
 (define-transform "uuid" "string" (c r args sc slot) (uuid))
+
+;; ---- escape: one kind of escaping to another ----------------------------------------
+;; An Escaping is (escaping read write): string -> string each way — `read` the text an escaped
+;; string stands for, `write` a text escaped. The specification's four kinds, by name:
+(struct escaping (read write))
+;; code->string : integer string -> string   the character with that code; `otherwise` when no
+;; character has it (a lone surrogate, a number beyond Unicode)
+(define (code->string n otherwise)
+  (if (or (<= 0 n #xD7FF) (<= #xE000 n #x10FFFF)) (string (integer->char n)) otherwise))
+;; unescape-backslashes : string -> string   \n \t \r \b \f, \uXXXX (a surrogate pair is one
+;; character) and \<any other> as itself (Java, JSON)
+(define (unescape-backslashes s)
+  (define (hex g from) (string->number (substring g from (+ from 4)) 16))
+  (regexp-replace* #px"\\\\(u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)" s
+                   (lambda (all g)
+                     (cond [(= (string-length g) 11)       ; uD83D\uDE00
+                            (code->string (+ #x10000 (* #x400 (- (hex g 1) #xD800)) (- (hex g 7) #xDC00)) all)]
+                           [(> (string-length g) 1) (code->string (hex g 1) all)]
+                           [else (case g [("n") "\n"] [("t") "\t"] [("r") "\r"] [("b") "\b"] [("f") "\f"] [else g])]))))
+;; escape-backslashes : string boolean -> string   quotes, backslashes and control characters escaped;
+;; ascii-only? (Java) writes every character beyond ASCII as \uXXXX, in UTF-16 units
+(define (escape-backslashes s ascii-only?)
+  (define (unit n) (string-append "\\u" (string-upcase (let ([h (number->string n 16)]) (string-append (make-string (- 4 (string-length h)) #\0) h)))))
+  (apply string-append
+         (for/list ([ch (in-string s)])
+           (define n (char->integer ch))
+           (cond [(char=? ch #\") "\\\""] [(char=? ch #\\) "\\\\"]
+                 [(char=? ch #\newline) "\\n"] [(char=? ch #\tab) "\\t"] [(char=? ch #\return) "\\r"]
+                 [(char=? ch #\backspace) "\\b"] [(char=? ch #\page) "\\f"]
+                 [(< n 32) (unit n)]
+                 [(and ascii-only? (> n #xFFFF))
+                  (let ([m (- n #x10000)]) (string-append (unit (+ #xD800 (quotient m #x400))) (unit (+ #xDC00 (remainder m #x400)))))]
+                 [(and ascii-only? (> n 126)) (unit n)]
+                 [else (string ch)]))))
+(define xml-entities '(("&amp;" . "&") ("&lt;" . "<") ("&gt;" . ">") ("&quot;" . "\"") ("&apos;" . "'")))
+(define (unescape-xml s)
+  (regexp-replace* #px"&(?:#([0-9]+)|#x([0-9a-fA-F]+)|[a-z]+);" s
+                   (lambda (all dec hex)
+                     (cond [dec (code->string (string->number dec) all)]
+                           [hex (code->string (string->number hex 16) all)]
+                           [(assoc all xml-entities) => cdr]
+                           [else all]))))
+(define (escape-xml s)
+  (regexp-replace* #rx"[&<>\"']" s (lambda (ch) (car (findf (lambda (e) (equal? (cdr e) ch)) xml-entities)))))
+(define escapings
+  (hash "plain" (escaping values values)
+        "java"  (escaping unescape-backslashes (lambda (s) (escape-backslashes s #t)))
+        "json"  (escaping unescape-backslashes (lambda (s) (escape-backslashes s #f)))
+        "xml"   (escaping unescape-xml escape-xml)))
 
 ;; arg-value : an Arg (parser/ast) scope -> its jsexpr value: a literal, a variable's, an expression's
 (define (arg-value a sc)
@@ -697,16 +798,38 @@
     [(list v unit system) (hasheq 'value (number-of v) 'unit unit 'system system)]
     [(list v unit system code) (hasheq 'value (number-of v) 'unit unit 'system system 'code code)]
     [_ (rule-error r "qty takes a text, or a value, a unit and optionally a system and a code")]))
+;; "type is a code from the identifier type value set": a coding in that value set's code system
+(define identifier-type-system "http://terminology.hl7.org/CodeSystem/v2-0203")
 (define-constructor "id" "Identifier" (r vals)
   (match vals
     [(list system value) (hasheq 'system system 'value value)]
-    [(list system value type) (hasheq 'system system 'value value 'type (hasheq 'text type))]
+    [(list system value type)
+     (hasheq 'system system 'value value 'type (hasheq 'coding (list (coding identifier-type-system type))))]
     [_ (rule-error r "id takes a system, a value and optionally a type")]))
+;; contact-system : value -> "email" | "url" | "phone" | "fax" | "sms" | #f   "If no system is
+;; provided, the system should be inferred from the content of the value": its scheme, an address
+;; with an @, a web address, a number as a phone writes it; nothing when the content does not say
+(define (contact-system v)
+  (and (string? v)
+       (cond [(regexp-match? #px"^(?i:mailto:)|^[^@\\s]+@[^@\\s]+$" v) "email"]
+             [(regexp-match? #px"^(?i:https?://|ftp://|www[.])" v) "url"]
+             [(regexp-match? #px"^(?i:fax:)" v) "fax"]
+             [(regexp-match? #px"^(?i:sms:)" v) "sms"]
+             [(regexp-match? #px"^(?i:tel:)|^[+(]?[0-9][-0-9 ()./]{4,}$" v) "phone"]
+             [else #f])))
 (define-constructor "cp" "ContactPoint" (r vals)
   (match vals
-    [(list value) (hasheq 'value value)]
+    [(list value) (drop-nulls (hasheq 'system (contact-system value) 'value value))]
     [(list system value) (hasheq 'system system 'value value)]
     [_ (rule-error r "cp takes a value, optionally after a system")]))
+;; escape(source, fmt1, fmt2): the source, read as escaped in fmt1, written escaped in fmt2
+(define-constructor "escape" "string" (r vals)
+  (define (kind name)
+    (or (and (string? name) (hash-ref escapings name #f))
+        (rule-error r "escape: ~s is not a kind of escaping (~a)" name (string-join (sort (hash-keys escapings) string<?) ", "))))
+  (match vals
+    [(list s from to) (if (string? s) ((escaping-write (kind to)) ((escaping-read (kind from)) s)) s)]
+    [_ (rule-error r "escape takes a variable and two kinds of escaping: escape(v, 'plain', 'json')")]))
 (define-constructor "append" "string" (r vals)
   (apply string-append (for/list ([a (in-list vals)]) (if (string? a) a (format "~a" a)))))
 
@@ -765,9 +888,16 @@
     [(fp-invoke t 'value) #:when t (strip-value-steps t)]
     [_ (fp-map strip-value-steps ast)]))
 
-;; a where/check condition over the focus, with the rule's variables in scope
+;; fp-true? : fml-fhirpath focus scope -> boolean   a where/check condition over the focus, with the
+;; rule's variables in scope, read as FHIRPath reads a collection where a Boolean is expected
+;; (singleton evaluation): a single Boolean is its value; a single item of another kind is true
+;; (`where ($this.resource.ofType(Patient))` holds for the entry whose resource is a Patient);
+;; nothing, or several items, is not true
 (define (fp-true? fpath focus sc)
-  (equal? (map item->system (fp-items (fml-fhirpath-ast fpath) focus sc)) '(#t)))
+  (match (map item->system (fp-items (fml-fhirpath-ast fpath) focus sc))
+    [(list (? boolean? b)) b]
+    [(list _) #t]
+    [_ #f]))
 
 (define (fp-scalar ast sc)
   (define items (fp-items ast #f sc))

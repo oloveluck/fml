@@ -1,5 +1,9 @@
 # fml — FHIR Mapping Language
 
+> Part of [fhir](https://github.com/oloveluck/fhir), a FHIR implementation designed to be used by
+> AI agents: one line per problem, at its place, with what would fix it; a guide written for an
+> agent to read; the same language inside the `fhir-mcp` workspace.
+
 Health data often arrives in one shape and is needed in another: a filled-in questionnaire that
 should become a Patient, a form of your own design that should become an Observation. The
 [FHIR Mapping Language](https://hl7.org/fhir/R5/mapping-language.html) is the standard way to write
@@ -33,9 +37,9 @@ them. With Racket, `raco fml` is the same command.
 **[oloveluck.github.io/fml](https://oloveluck.github.io/fml/)**: a first example explained line by
 line, writing and checking a map, shapes of your own, maps in a program, and the reference.
 
-- How well it works, against HL7's test cases and tutorial: [TESTING.md](TESTING.md).
-- For AI agents: [guide.md](guide.md), a cheat sheet and recipes, each one tested; and the
+- For agents: [guide.md](guide.md), a cheat sheet and recipes, each one tested; and the
   [fml skill](.claude/skills/fml/SKILL.md).
+- How well it works, against HL7's test cases and tutorial: [TESTING.md](TESTING.md).
 - How it is built: [CLAUDE.md](CLAUDE.md).
 
-Part of the [fhir](https://github.com/oloveluck/fhir) family. License: MIT.
+License: MIT.

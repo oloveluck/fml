@@ -72,7 +72,7 @@
    ;; keywords: the FML surface + FHIRPath's operator keywords (emitted as literal-string tokens)
    [(:or "map" "uses" "alias" "imports" "let" "group" "extends" "where" "check" "log" "then"
          "conceptmap" "prefix" "unmapped" "for"
-         "share" "single" "types" "source" "queried" "target" "produced" "default"
+         "share" "single" "types" "type" "source" "queried" "target" "produced" "default"
          "first" "not_first" "last" "not_last" "only_one"
          "implies" "and" "or" "xor" "in" "contains" "is" "as" "div" "mod")
     (token lexeme lexeme)]
@@ -83,8 +83,9 @@
    [(:: "%" "'" (:* (:or (:: "\\" any-char) (:~ "'" "\\"))) "'")
     (token 'EXTERNAL (unescape (trim-ends (substring lexeme 1))))]
 
-   ;; identifiers (`type+` appears as a group flag)
-   [(:: (:or alphabetic "_") (:* (:or alphabetic numeric "_")) (:? "+"))
+   ;; identifiers (the group flag `type+` is the keyword `type` and a `+`: a name never takes the
+   ;; `+` after it, so `(a+1)` is an addition)
+   [(:: (:or alphabetic "_") (:* (:or alphabetic numeric "_")))
     (token 'IDENTIFIER (string->symbol lexeme))]
 
    ;; multi-char before single-char

@@ -5,8 +5,8 @@
 ;;;      the command line, no line in an OperationOutcome): it is the rule's error, at its line;
 ;;;   2. an `imports` nothing resolves silenced the unknown-group check (such a map checked clean,
 ;;;      whatever it called): the unresolved import is said, once;
-;;;   3. `check` passed the specification's transforms this engine does not run (escape, dateOp,
-;;;      pointer), which then failed when the map ran;
+;;;   3. `check` passed the specification's transforms this engine does not run (then escape, dateOp
+;;;      and pointer; now dateOp alone), which then failed when the map ran;
 ;;;   4. `check --examples` said "its source matched nothing in the input" for a value the lenient
 ;;;      read had dropped (a date written 01/05/1950), where `transform #:validate` named it.
 
@@ -49,11 +49,12 @@
 (check-regexp-match #rx"no group nothere in this map"
                     (car (messages (check-map (a-map (group "  src.item as item then nothere(item, tgt);\n"))) 'error)))
 
-;; 3. a transform the engine does not run is an error of the check, at its rule
-(let ([found (check-map (a-map (group "  src.id as i -> tgt.id = escape(i, 'html');\n"
+;; 3. a transform the engine does not run is an error of the check, at its rule (dateOp: the
+;;    specification leaves its parameters "to be documented"; escape and pointer are run since)
+(let ([found (check-map (a-map (group "  src.id as i -> tgt.id = dateOp(i, 'add');\n"
                                       "  src.id as i -> tgt.id = copy(i);\n")))])
   (check-equal? (length (messages found 'error)) 1)
-  (check-regexp-match #rx"the transform escape is not one this engine runs" (car (messages found 'error)))
+  (check-regexp-match #rx"the transform dateOp is not one this engine runs" (car (messages found 'error)))
   (check-equal? (loc-line (diagnostic-loc (car found))) 6))
 
 ;; 4. the value the lenient read dropped is named where the example is checked

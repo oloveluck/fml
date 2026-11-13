@@ -12,7 +12,7 @@
 ;;; The `/// name = value` metadata lines are the resource's other elements (title, status,
 ;;; description, jurisdiction …), both ways.
 
-(require racket/contract racket/list racket/string
+(require racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
          (only-in fhirpath/print fhirpath->string)
          (only-in fhirpath/parser/parse parse-fhirpath)
@@ -92,11 +92,9 @@
            'dependent (let ([ds (fml-rule-dependents r)])
                         (and (pair? ds)
                              (for/list ([d (in-list ds)])
-                               (hasheq 'name (fml-call-name d)
-                                       'parameter (for/list ([a (in-list (fml-call-args d))])
-                                                    (if (string? a)
-                                                        (hasheq 'valueId a)
-                                                        (hasheq 'valueString (fhirpath->string (fml-fhirpath-ast a))))))))))))
+                               (drop-false
+                                (hasheq 'name (fml-call-name d)
+                                        'parameter (parameters (fml-call-args d))))))))))
 
 ;; fp-text : (fml-fhirpath ast)|#f -> the printed expression string (for condition/check/log)
 (define (fp-text f) (and f (fhirpath->string (fml-fhirpath-ast f))))
@@ -125,7 +123,7 @@
         [(typed-literal? tr) (values "copy" (list (arg->parameter tr)))]
         [(fml-fhirpath? tr) (values "evaluate" (list (arg->parameter tr)))]
         [(fml-var? tr) (values "copy" (list (hasheq 'valueId (fml-var-name tr))))]
-        [(fml-invoke? tr) (values (fml-invoke-name tr) (map arg->parameter (fml-invoke-args tr)))]
+        [(fml-invoke? tr) (values (fml-invoke-name tr) (parameters (fml-invoke-args tr)))]
         [else (values #f #f)])))
 
   (drop-false
@@ -139,7 +137,8 @@
                        (and (pair? ms) ms))
            'listRuleId (let ([id (fml-target-share t)]) (and (string? id) id)))))
 
-;; How a transform's argument crosses into a StructureMap parameter (and back, target<-jsexpr):
+;; How an argument — a transform's, a group invocation's — crosses into a StructureMap parameter
+;; (and back: `argument`, below):
 ;;   a variable, a string             <-> valueId
 ;;   (fml-literal s)                  <-> valueString
 ;;   (fml-fhirpath (fp-lit n)) n int  <-> valueInteger n ;  a boolean  <-> valueBoolean
@@ -155,6 +154,9 @@
          (if (boolean? v) (hasheq 'valueBoolean v) (hasheq 'valueInteger v))]
         [(fml-fhirpath? a) (hasheq 'valueString (fhirpath->string (fml-fhirpath-ast a)))]
         [else (hasheq 'valueId a)]))
+;; parameters : (listof Arg) -> (listof parameter) | #f   none is no `parameter` element (an empty
+;; array is not FHIR JSON: `uuid()` wrote `"parameter": []`)
+(define (parameters args) (and (pair? args) (map arg->parameter args)))
 
 ;; ---- metadata <-> the resource's elements ------------------------------------------
 ;; `/// name{.property}* = value`: the name an element of StructureMap, each property a step into
@@ -242,16 +244,43 @@
              (case (jref g 'typeMode) [("types") '("types")] [("type-and-types") '("type+")] [else '()])
              (map rule<-jsexpr (jlist g 'rule))))
 
+;; rule<-jsexpr : rule -> fml-rule   The reference implementation writes the simple form
+;; `src.a -> tgt.a` as a source and a target that share its synthetic variable, the target a
+;; `create` of nothing, and nothing after — "imply what is to be created … imply what is to be done
+;; based on types". Read as the simple form it stands for (run as written, it copied nothing).
 (define (rule<-jsexpr r)
-  (fml-rule (map source<-jsexpr (jlist r 'source))
-            (map target<-jsexpr (jlist r 'target))
-            (for/list ([d (in-list (jlist r 'dependent))])
-              (fml-call (jref d 'name)
-                        (for/list ([p (in-list (jlist d 'parameter))])
-                          (cond [(jref p 'valueId) => values]
-                                [else (fml-fhirpath (parse-fhirpath (parameter-text p)))]))))
-            (map rule<-jsexpr (jlist r 'rule))
-            (let ([n (jref r 'name)]) (and (string? n) (not (regexp-match? #px"^rule-[0-9]+$" n)) n))))
+  (define sources (map source<-jsexpr (jlist r 'source)))
+  (define targets (map target<-jsexpr (jlist r 'target)))
+  (define dependents (map dependent<-jsexpr (jlist r 'dependent)))
+  (define nested (map rule<-jsexpr (jlist r 'rule)))
+  (define name (let ([n (jref r 'name)]) (and (string? n) (not (regexp-match? #px"^rule-[0-9]+$" n)) n)))
+  (define simple-form?
+    (match (list sources targets dependents nested)
+      [(list (list (struct* fml-source ([element (? string?)] [variable (? string? v)])))
+             (list (struct* fml-target ([element (? string?)] [variable v] [transform (fml-invoke "create" '())])))
+             '() '())
+       #t]
+      [_ #f]))
+  (if simple-form?
+      (fml-rule (list (struct-copy fml-source (car sources) [variable #f]))
+                (list (struct-copy fml-target (car targets) [variable #f] [transform #f]))
+                '() '() name)
+      (fml-rule sources targets dependents nested name)))
+
+;; dependent<-jsexpr : dependent -> fml-call   R5's `parameter` (a variable or a literal, as a
+;; transform's), R4's `variable` (names)
+(define (dependent<-jsexpr d)
+  (fml-call (jref d 'name)
+            (if (pair? (jlist d 'parameter))
+                (map argument (jlist d 'parameter))
+                (filter string? (jlist d 'variable)))))
+
+;; argument : parameter -> Arg   a StructureMap parameter as an invocation's argument: valueId a
+;; variable, valueString a string literal, a typed literal the FHIRPath literal it is
+(define (argument p)
+  (cond [(jref p 'valueId) => values]
+        [(jref p 'valueString) => fml-literal]
+        [else (fml-fhirpath (parse-fhirpath (parameter-text p)))]))
 
 (define (source<-jsexpr s)
   (fml-source (jref s 'context) (jref s 'element)
@@ -285,12 +314,12 @@
 (define (target<-jsexpr t)
   (define tr (jref t 'transform))
   (define ps (jlist t 'parameter))
-  ;; a parameter as an invocation argument: valueId a variable; valueString a literal, except the
-  ;; expression of `evaluate` (its last parameter); a typed literal a FHIRPath literal
+  ;; a parameter as an invocation argument (`argument`), except the expression of `evaluate`, its
+  ;; last parameter: a valueString that is FHIRPath
   (define (arg p last?)
-    (cond [(jref p 'valueId) => values]
-          [(jref p 'valueString) => (lambda (s) (if (and last? (equal? tr "evaluate")) (fml-fhirpath (parse-fhirpath s)) (fml-literal s)))]
-          [else (fml-fhirpath (parse-fhirpath (parameter-text p)))]))
+    (if (and last? (equal? tr "evaluate") (jref p 'valueString))
+        (fml-fhirpath (parse-fhirpath (jref p 'valueString)))
+        (argument p)))
   (define transform
     (cond
       [(not tr) #f]

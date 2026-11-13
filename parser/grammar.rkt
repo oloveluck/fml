@@ -45,7 +45,7 @@ parameter       : input-mode identifier param-type?
 param-type      : /":" identifier
 input-mode      : "source" | "target"
 extends-clause  : /"extends" identifier
-type-mode       : /"<<" identifier+ /">>"
+type-mode       : /"<<" ("types" | "type" "+") /">>"
 
 frule           : rule-sources (/"->" rule-targets)? dependent? rule-name? /";"
 ;; the text writes a rule's name in double quotes, the g4 as a bare id (never a keyword)
@@ -124,7 +124,7 @@ external-constant   : EXTERNAL
 identifier          : IDENTIFIER | BDELIM | "as" | "is" | "in" | "contains" | "where" | "check" | "log"
                     | "first" | "last" | "single" | "share" | "default" | "div" | "mod"
                     | "source" | "target" | "map" | "uses" | "alias" | "let" | "group" | "extends"
-                    | "conceptmap" | "prefix" | "types" | "queried" | "produced" | "unmapped" | "for"
+                    | "conceptmap" | "prefix" | "types" | "type" | "queried" | "produced" | "unmapped" | "for"
                     | "not_first" | "not_last" | "only_one"
 
 ;; the FML dialect also admits "double-quoted" strings inside expressions (qr2cda-eval's iif)

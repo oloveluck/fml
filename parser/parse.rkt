@@ -15,7 +15,8 @@
          (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
          (only-in "../error.rkt" fml-error)
-         (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc diagnostic diagnostic?))
+         (only-in fhirpath/print fhirpath->string)
+         (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc diagnostic diagnostic? raise-diagnostic))
 
 (provide (contract-out
           ;; (ok fml-map) | (err fml-error) — a parse error carries its diagnostic (positions in `source`)
@@ -40,7 +41,8 @@
 (define current-locs (make-parameter (hasheq)))
 (define current-source (make-parameter #f))
 (define located-tags '(fgroup frule rule-source rule-target
-                       where-clause check-clause target-list-mode conceptmap metadata))
+                       where-clause check-clause target-list-mode conceptmap metadata
+                       transform gcall rule-name))
 ;; syntax->datum/locs : syntax -> (values datum (hasheq datum-node -> (list line col pos span)))
 (define (syntax->datum/locs stx)
   (define locs (make-hasheq))
@@ -50,30 +52,37 @@
              (when (and (pair? d) (memq (car d) located-tags) (syntax-line s))
                (hash-set! locs d (list (syntax-line s) (syntax-column s) (syntax-position s) (syntax-span s))))
              d]
-          [else (syntax-e s)]))
+          ;; a token's value, whole: a date literal is a struct, whose fields `syntax-e` would
+          ;; leave as syntax (`@2020-01-01` then printed, and evaluated, as a syntax object)
+          [else (syntax->datum s)]))
   (define d (walk stx))
   (values d locs))
+;; loc-of : datum-node -> loc | #f   where a located node was parsed (1-based line and column)
+(define (loc-of d)
+  (match (hash-ref (current-locs) d #f)
+    [(list line col pos span) (loc (current-source) line (and col (add1 col)) pos span)]
+    [#f #f]))
 ;; located! : ast-node datum-node -> ast-node   the node remembers where its datum was parsed
 (define (located! node d)
-  (define l (hash-ref (current-locs) d #f))
-  (when l (attach-loc! node (loc (current-source) (car l) (let ([c (cadr l)]) (and c (add1 c))) (caddr l) (cadddr l))))
+  (define l (loc-of d))
+  (when l (attach-loc! node l))
   node)
+;; parse-error : datum-node format args … -> raises   a text the grammar reads and the language does
+;; not have, refused at its place (the lowering's own parse errors)
+(define (parse-error d fmt . args)
+  (raise-diagnostic (diagnostic 'fml 'parse 'error (apply format fmt args) (or (loc-of d) (loc (current-source) #f #f #f #f)))))
 
 ;; ---- beyond the specification ------------------------------------------------------
-;; Four forms are read that the specified language does not have (grammar.rkt's header says why
-;; each is read). A map that writes one is told so, at the form: print.rkt writes none of the first
-;; two, and the last two only for a StructureMap that holds what they say.
+;; Some forms are read that the specified language does not have (grammar.rkt's header says why
+;; each is read). A map that writes one is told so, at the form: print.rkt writes none of them but
+;; `share <id>` and the `conceptmap` block, and those only for a StructureMap that holds what they say.
 (define notes (make-weak-hasheq))
 (define (specification-notes m) (hash-ref notes m '()))
 
 ;; beyond-specification : datum source-text -> (listof diagnostic)
 (define (beyond-specification d src)
   (define (note node fmt . args)
-    (define l (hash-ref (current-locs) node #f))
-    (diagnostic 'fml 'check 'warning (apply format fmt args)
-                (if l
-                    (loc (current-source) (car l) (let ([c (cadr l)]) (and c (add1 c))) (caddr l) (cadddr l))
-                    (loc (current-source) #f #f #f #f))))
+    (diagnostic 'fml 'check 'warning (apply format fmt args) (or (loc-of node) (loc (current-source) #f #f #f #f))))
   ;; the text a located node was parsed from
   (define (text-of node)
     (match (hash-ref (current-locs) node #f)
@@ -108,7 +117,26 @@
        (if (equal? (car (lower-metadata x)) "")
            (list (note x "`///~a` states no element: the specification's metadata is `/// <element> = <value>` (a comment is `//`)" raw))
            '())]
-      [(cons (or 'fp-expr 'transform 'function-call) _) '()]            ; no FML form inside an expression
+      ;; a transform is a literal, a variable (a path of names), an invocation, or an expression in
+      ;; parentheses (the specification's short hand for `evaluate`); a "double-quoted" one is a literal
+      [(list 'transform (? pair? expression))
+       (define text (text-of x))
+       (if (or (plain-value? (lower expression)) (not text) (parenthesized? (string-trim text)))
+           '()
+           (list (note x "`= ~a`: the specification writes an expression in parentheses — `= (~a)`" (string-trim text) (string-trim text))))]
+      ;; an invocation's parameter is a variable or a literal: nothing else has a place in a StructureMap
+      [(cons 'gcall _)
+       (define arguments (let ([al (kid x 'arg-list)]) (if al (cdr al) '())))
+       (for/list ([e (in-list arguments)] #:unless (plain-argument? (lower e)))
+         (define text (fhirpath->string (lower e)))
+         (note x "`~a(… ~a …)`: a group is given variables and literals; as a StructureMap this argument is the text of the expression, not its value — name it first (`… as v`) and pass `v`"
+               (id-of (cadr x)) text))]
+      [(list 'rule-name _)
+       (define text (text-of x))
+       (if (and text (regexp-match? #rx"^'" text))
+           (list (note x "~a: the specification writes a rule's name in double quotes — ~s" text (cadr x)))
+           '())]
+      [(cons (or 'fp-expr 'function-call) _) '()]                        ; no FML form inside an expression
       [(cons (? symbol?) parts) (append-map walk (filter pair? parts))]
       [_ '()]))
   (walk d))
@@ -208,7 +236,10 @@
                           (id-of (caddr p))
                           (let ([t (kid p 'param-type)]) (and t (id-of (cadr t))))))
              (let ([e (kid g 'extends-clause)]) (and e (id-of (cadr e))))
-             (let ([tm (kid g 'type-mode)]) (if tm (map id-of (cdr tm)) '()))
+             (match (kid g 'type-mode)                  ; the flags as written: `types` | `type+`
+               [(list _ "types") '("types")]
+               [(list _ "type" "+") '("type+")]
+               [#f '()])
              (append* (for/list ([r (in-list (cdr g))] #:when (or ((tagged? 'frule) r) ((tagged? 'short-rule) r)))
                         (if ((tagged? 'frule) r) (list (lower-rule r)) (lower-short-rule r))))))
 
@@ -241,6 +272,11 @@
   (located! (lower-source* s ctx-ids) s))
 (define (lower-source* s ctx-ids)
   (define cardinality (kid s 'source-cardinality))
+  ;; `min..max`: whole numbers (the lexer's NUMBER is also a decimal), max a number or `*`
+  (when cardinality
+    (for ([bound (in-list (list (cadr cardinality) (cadr (caddr cardinality))))]
+          #:unless (regexp-match? #px"^(?:[0-9]+|[*])$" bound))
+      (parse-error s "a cardinality is whole numbers, `0..1` or `1..*`: `~a` is not one" bound)))
   (fml-source (car ctx-ids)
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
               (let ([t (kid s 'source-type)]) (and t (id-of (cadr t))))
@@ -295,20 +331,35 @@
 (define-match-expander fp-callv
   (syntax-rules () [(_ t n a) (? fp-call? (and (app fp-call-target t) (app fp-call-name n) (app fp-call-args a)))]))
 
+;; plain-value? : fhirpath-ast -> boolean   what a transform may be without parentheses: a literal,
+;; a variable or a path of names, an invocation
+(define (plain-value? ast)
+  (match ast
+    [(? fp-lit?) #t]
+    [(fp-inv* #f _) #t]
+    [(fp-inv* target _) (plain-value? target)]
+    [(fp-callv #f _ _) #t]
+    [_ #f]))
+;; plain-argument? : fhirpath-ast -> boolean   a group invocation's parameter: a variable or a literal
+(define (plain-argument? ast)
+  (match ast
+    [(? fp-lit?) #t]
+    [(fp-inv* #f _) #t]
+    [_ #f]))
+
+;; invoke-arg : fhirpath-ast -> Arg   a variable by its name, a string literal, else the expression
 (define (invoke-arg a)
   (match a
     [(fp-lit* v) #:when (string? v) (fml-literal v)]
     [(fp-inv* #f name) (symbol->string name)]            ; a variable argument
     [ast (fml-fhirpath ast)]))
 
+;; lower-gcall : (gcall name arg-list?) -> fml-call   its arguments as an invocation's: a variable
+;; by name, a string literal, else the expression
 (define (lower-gcall c)
   (fml-call (id-of (cadr c))
             (let ([al (kid c 'arg-list)])
-              (if al (for/list ([e (in-list (cdr al))])
-                       (match (lower e)
-                         [(fp-inv* #f name) (symbol->string name)]
-                         [ast (fml-fhirpath ast)]))
-                  '()))))
+              (if al (map (lambda (e) (invoke-arg (lower e))) (cdr al)) '()))))
 
 (module+ test
   (require (only-in fhir/diagnostic attached-loc loc-line loc-column loc-source diagnostic-loc diagnostic-severity diagnostic-message))
