@@ -256,3 +256,16 @@ specification defines, read in full, and what is read beyond it is said.
   `conceptmap` — 58/58 corpus maps, 25/25 of matchbox's StructureMap RESOURCES (resource -> text ->
   resource), and the 332 inter-version R4 maps in CI (`--parse-corpus` now writes each back too).
 - `support.rkt` reads the map's name and url from the metadata lines as well as from `map`.
+
+**Found writing the manual** (2026-11-13; `tests/run-errors-test.rkt`). A call to a group nothing
+defines was a plain `error` at run time (a stack trace from `raco fml --transform`, exit 0, and no
+line in `$transform`'s OperationOutcome): `run-call` takes the rule and raises `rule-error`, naming
+an import that did not resolve. `unresolved-imports` (transform.rkt) is that list; `check-map` warns
+once per unresolved import (`check-imports`) and decides "no group …" whenever every import
+resolved — any `imports` line used to switch that check off. A transform the engine does not run
+(`escape`, `dateOp`, `pointer`; `transform-names` is the catalogue) is an error of the check at its
+rule (`unsupported-transform`); it checked clean and failed when run. `validate-result #:drops`
+says a rule wrote nothing because the lenient read dropped its value, for `raco fml check
+--examples` as for `transform #:validate` (base.rkt passes its drops instead of rewriting the
+message). The fhir-test-cases suite skips 4 tests (an XML expected output, or a map given as
+StructureMap JSON): the tool's count, where the note above says "4 + 1".

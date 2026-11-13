@@ -38,19 +38,16 @@
   (define profiles (cond [(eq? spec #t) '()]
                          [(list? spec) (append-map profiles-from spec)]
                          [else (profiles-from spec)]))
-  (define errors (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (validate-result fml out #:profiles profiles #:source source)))
-  ;; a rule that "matched nothing" because the read dropped its value (`05/01/1950` is no date) is
-  ;; said so: the item was there, the map never saw it
-  (define (why line)
-    (if (null? drops) line
-        (string-replace line "(the rule here wrote nothing: its source matched nothing in the input)"
-                        (format "(the rule here wrote nothing: its source matched nothing the map could read — ~a could not be read)"
-                                (string-join (map drop->string drops) ", ")))))
+  ;; `drops`: what the lenient read left out of the source, so a rule that "matched nothing" because
+  ;; its value was unreadable is said so (check.rkt's validate-result, which `raco fml check
+  ;; --examples` uses too)
+  (define errors (filter (lambda (d) (eq? (diagnostic-severity d) 'error))
+                         (validate-result fml out #:profiles profiles #:source source #:drops drops)))
   ;; raised as `exn:fail:operation` (an exn:fail:user carrying an OperationOutcome), as `ensure-valid`
   ;; raises, so one handler — `exn:fail:operation?` — catches an invalid result wherever it is found
   ;; (a new user's documented handler caught nothing: this raised a plain exn:fail:user)
   (unless (null? errors)
-    (define lines (map (lambda (d) (why (cwd-relative (diagnostic->string d)))) errors))
+    (define lines (map (lambda (d) (cwd-relative (diagnostic->string d))) errors))
     (raise (exn:fail:operation
             (format "the map's ~a is invalid against ~a (FHIR ~a):\n  ~a"
                     (if (hash? out) (hash-ref out 'resourceType "result") "result")

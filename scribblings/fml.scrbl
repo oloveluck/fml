@@ -753,16 +753,16 @@ is @racketmodname[fml/workspace].
 
 @itemlist[
 @item{@bold{Three transforms are missing.} @tt{escape}, @tt{dateOp} and @tt{pointer} are not
-implemented. The check does not flag them; the rule fails when it runs, with the list of the ones
-there are.}
+implemented. The check reports a rule that uses one, with the list of the ones there are.}
 @item{@bold{One version of FHIR.} Maps run over FHIR R5. Data from another version is read as far
 as it fits, and the run names each value it could not read. An element R5 dropped (R4's
 @tt{Composition.code}) is not an element here.}
 @item{@bold{JSON only.} Data is read and written as JSON. Maps that produce XML documents, such as
 CDA, are not supported.}
-@item{@bold{Imports that cannot be found are skipped.} An @tt{imports} address no registered map,
-data source or package answers is ignored without a message. The check then cannot tell whether a
-group the map calls exists, and says nothing; the call fails when the map runs.}
+@item{@bold{An import that cannot be found is a warning.} When no registered map, data source or
+package answers an @tt{imports} address, the check says so. It then cannot tell whether a group the
+map calls exists; a call to a group nothing has fails when the map runs, at the rule's line, naming
+the import that was not found.}
 @item{@bold{Only @tt{share} among the target list modes has an effect.} Of the words that can
 follow a target (@tt{first}, @tt{last}, @tt{share}, @tt{single}), only @tt{share} changes what a
 run does. The others are kept in the StructureMap and otherwise ignored.}

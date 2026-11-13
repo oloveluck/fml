@@ -22,8 +22,9 @@
 
 (require (only-in fhir/suggest did-you-mean closest-names)
          racket/contract racket/list racket/string racket/match
+         (only-in fhir/serialize/lenient lenient-drops drop->string)
          "parser/ast.rkt"
-         (only-in "transform.rkt" uses-types map-imports run-map current-empty-targets)
+         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map current-empty-targets)
          (only-in "parser/parse.rkt" specification-notes)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          "schema.rkt"
@@ -43,7 +44,8 @@
           ;; each example (FHIR JSON) transformed, the result validated against its base type and the
           ;; profiles; issues positioned at the rule that wrote the element
           ;; validate-result : map result [#:profiles sds #:source file #:label str] -> (listof diagnostic)
-          [validate-result (->* (fml-map? any/c) (#:profiles (listof hash?) #:source (or/c string? path? #f) #:label string?)
+          [validate-result (->* (fml-map? any/c) (#:profiles (listof hash?) #:source (or/c string? path? #f) #:label string?
+                                                 #:drops list?)
                                 (listof diagnostic?))]
           ;; profiles-from : spec -> (listof StructureDefinition)   a JSON file, an FSH project (a
           ;; directory or a .fsh file: its profiles, its definitions registered), a canonical
@@ -70,8 +72,17 @@
   (define c (cx (uses-types m) (append-map fml-map-groups (map-imports m)) m
                 (lambda (node) (or (attached-loc node) fallback))))
   (append (append-map (lambda (g) (check-group c g)) (fml-map-groups m))
+          (check-imports c)
           (check-required c)
           (specification-notes m)))                    ; what the text wrote beyond the specified language
+
+;; check-imports : cx -> (listof diagnostic)   an import nothing resolves, said once: its groups are
+;; unknown here, so a call to a group this map lacks cannot be told from a misspelt one (such a map
+;; checked clean, whatever group it called)
+(define (check-imports c)
+  (for/list ([u (in-list (unresolved-imports (cx-map c)))])
+    (finding c (cx-map c) 'warning
+             "imports ~s: no StructureMap with that url was found (check it with the map beside it, or its package): calls to groups this map does not define are not checked" u)))
 
 (define (finding c node severity fmt . args)
   (diagnostic 'fml 'check severity (apply format fmt args) ((cx-at c) node)))
@@ -123,8 +134,22 @@
      (values (bound (and (not missing) ty))
              (findings-if missing c s "`~a` is not an element of ~a~a" missing (ty->string ty) (element-suggestion missing ty)))]))
 
-;; a target clause: a target context in scope, the element on its type, a value that fits; `as` binds
+;; a target clause: what `target-clause` finds, and a transform the engine does not run (the
+;; specification's escape, dateOp and pointer: such a map checked clean and failed when run)
 (define (bind-target c t sc)
+  (define-values (sc2 found) (target-clause c t sc))
+  (values sc2 (append found (unsupported-transform c t))))
+
+;; unsupported-transform : cx target -> (listof diagnostic)
+(define (unsupported-transform c t)
+  (match (fml-target-transform t)
+    [(fml-invoke (? string? name) _)
+     (findings-if (not (member name (transform-names))) c t
+                  "the transform ~a is not one this engine runs (it runs: ~a)" name (string-join (transform-names) " "))]
+    [_ '()]))
+
+;; a target clause: a target context in scope, the element on its type, a value that fits; `as` binds
+(define (target-clause c t sc)
   (define b (and (fml-target-context t) (hash-ref sc (fml-target-context t) #f)))
   (define (bound ty) (if (fml-target-variable t) (hash-set sc (fml-target-variable t) (binding 'target ty)) sc))
   (cond
@@ -170,8 +195,10 @@
 (define (check-dependent c r d sc)
   (define g (findf (lambda (g) (equal? (fml-group-name g) (fml-call-name d))) (cx-groups c)))
   (append
-   (cond [(and (not g) (null? (fml-map-imports (cx-map c))))
-          (list (finding c r 'error "no group ~a in this map (groups: ~a)" (fml-call-name d)
+   ;; decided when every import resolved (the groups in hand are all there are)
+   (cond [(and (not g) (null? (unresolved-imports (cx-map c))))
+          (list (finding c r 'error "no group ~a in this map~a (groups: ~a)" (fml-call-name d)
+                         (if (null? (fml-map-imports (cx-map c))) "" " or the maps it imports")
                          (string-join (map fml-group-name (cx-groups c)) ", ")))]
          [(and g (not (= (length (fml-call-args d)) (length (fml-group-params g)))))
           (list (finding c r 'error "group ~a takes ~a parameters, called with ~a"
@@ -224,7 +251,9 @@
           (define out (with-handlers ([exn:fail? (lambda (e) e)]) (run-map m (ok-value r))))
           (cond
             [(exn? out) (list (diagnostic 'fml 'check 'error (format "~a: ~a" (example-label i) (exn-message out)) (loc source #f #f #f #f)))]
-            [else (validate-result m out #:profiles profiles #:source source #:label (format "~a: " (example-label i)))]))]))))
+            [else (validate-result m out #:profiles profiles #:source source #:label (format "~a: " (example-label i))
+                                   ;; what the lenient read left out of this example
+                                   #:drops (if (hash? ex) (lenient-drops ex (ok-value r)) '()))]))]))))
 ;; example-label : (number | name) -> string
 (define (example-label i) (if (number? i) (format "example ~a" i) i))
 
@@ -256,7 +285,7 @@
 ;; the map's result held to its base type, the profiles it claims and those given that are of its
 ;; type (a profile of another type does not apply); each problem at the rule that wrote the element,
 ;; or, when no rule writes it, at the map with the rules' words: "no rule of <group> writes `x`"
-(define (validate-result m out #:profiles [profiles '()] #:source [source #f] #:label [label ""])
+(define (validate-result m out #:profiles [profiles '()] #:source [source #f] #:label [label ""] #:drops [drops '()])
   (define validate-issues (validator 'validate-issues))
   (define issue-severity (validator 'issue-severity))
   (define issue-path (validator 'issue-path))
@@ -280,6 +309,11 @@
               [(and (hash? out) (not (for/or ([k (in-hash-keys out)]) (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k)))))
                (define empty (and (current-empty-targets) (hash-ref (current-empty-targets) rule 'none)))
                (cond
+                 ;; a rule that "matched nothing" because the read dropped its value (`05/01/1950`
+                 ;; is no date) is said so: the item was there, the map never saw it
+                 [(and (eq? empty 'none) (pair? drops))
+                  (format " (the rule here wrote nothing: its source matched nothing the map could read — ~a could not be read)"
+                          (string-join (map drop->string drops) ", "))]
                  [(eq? empty 'none)
                   (format " (the rule here wrote nothing: its source matched nothing in the input)")]
                  ;; the source matched, but a `where` held for none of it (the gender answer was there,

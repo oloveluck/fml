@@ -71,7 +71,11 @@
           [registered-structure-maps (-> (listof string?))]
           ;; map-imports : map -> (listof map)   the map and its imports, transitively (missing ones
           ;; skipped), the map itself first
-          [map-imports (-> fml-map? (listof fml-map?))]))
+          [map-imports (-> fml-map? (listof fml-map?))]
+          ;; unresolved-imports : map -> (listof url)   the imports nothing resolves, transitively
+          [unresolved-imports (-> fml-map? (listof string?))]
+          ;; transform-names : -> (listof string)   the transforms the engine runs
+          [transform-names (-> (listof string?))]))
 
 ;; ---- maps by canonical ---------------------------------------------------------
 (define registered (make-hash))
@@ -98,6 +102,14 @@
        (define im (car todo))
        (define more (filter values (map resolve-structure-map (fml-map-imports im))))
        (loop (append (cdr todo) more) (cons (fml-map-url im) seen) (cons im acc))])))
+
+;; unresolved-imports : map -> (listof url)   the `imports` of the map (and of the maps it imports)
+;; that nothing resolves: their groups are unknown here
+(define (unresolved-imports m)
+  (remove-duplicates
+   (for*/list ([im (in-list (map-imports m))] [u (in-list (fml-map-imports im))]
+               #:unless (resolve-structure-map u))
+     u)))
 
 (define current-fml-log (make-parameter void))
 (define current-empty-targets (make-parameter #f))
@@ -343,7 +355,7 @@
   (define implicit? (and (= 1 (length (fml-rule-sources r))) (= 1 (length (fml-rule-targets r)))
                          (null? (fml-rule-dependents r)) (null? (fml-rule-nested r))))
   (define sc2 (for/fold ([sc sc]) ([t (in-list (fml-rule-targets r))]) (run-target c r t sc implicit?)))
-  (for ([call (in-list (fml-rule-dependents r))]) (run-call c call sc2))
+  (for ([call (in-list (fml-rule-dependents r))]) (run-call c call sc2 r))
   (for ([nr (in-list (fml-rule-nested r))]) (run-rule c nr sc2)))
 
 ;; rule-targets* : rule -> (listof target)   the rule's targets and its nested rules', all the way down
@@ -505,6 +517,7 @@
 ;; name is reported with the names there are.
 (struct transform (run result-type))
 (define transforms (make-hash))
+(define (transform-names) (sort (hash-keys transforms) string<?))
 (define-syntax-rule (define-transform name result-type (c r args sc slot) body ...)
   (hash-set! transforms name (transform (lambda (c r args sc slot) body ...) result-type)))
 (define (transform-ref r name)
@@ -744,14 +757,21 @@
         [(fhir? item) (node->jsexpr item)]
         [else (format "~a" v)]))
 
-;; run-call : `then group(a, b)` — the callee's params bound to the argument values positionally
-(define (run-call c call sc)
+;; run-call : ctx call scope rule -> void
+;; `then group(a, b)` — the callee's params bound to the argument values positionally. A group
+;; nothing has, or an argument nothing binds, is the rule's error at its line (it was a plain
+;; `error`: a stack trace at the command line, no line in an OperationOutcome)
+(define (run-call c call sc r)
   (define g (or (find-group c (fml-call-name call))
-                (error 'fml "unknown group ~a (the groups of this map~a: ~a)" (fml-call-name call)
-                       (if (pair? (cdr (ctx-maps c))) " and its imports" "")
-                       (string-join (map fml-group-name (all-groups c)) ", "))))
+                (rule-error r "unknown group ~a (the groups of this map~a: ~a)~a" (fml-call-name call)
+                            (if (pair? (cdr (ctx-maps c))) " and its imports" "")
+                            (string-join (map fml-group-name (all-groups c)) ", ")
+                            (let ([missing (unresolved-imports (car (ctx-maps c)))])
+                              (if (null? missing)
+                                  ""
+                                  (format "; not found: the imported ~a" (string-join missing ", ")))))))
   (define args (for/list ([a (in-list (fml-call-args call))])
-                 (cond [(string? a) (or (lookup sc a) (error 'fml "group ~a: unbound argument ~a" (fml-call-name call) a))]
+                 (cond [(string? a) (or (lookup sc a) (rule-error r "group ~a: unbound argument ~a" (fml-call-name call) a))]
                        [else (fp-scalar (fml-fhirpath-ast a) sc)])))
   (call-group c g args sc))
 

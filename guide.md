@@ -227,8 +227,10 @@ instance of a logical model names its type in `resourceType` (`{"resourceType": 
   receives the whole target.
 - A result fails validation: the problem names the rule that wrote the element (when one did); a
   required element no rule writes is reported without a line.
-- `unknown transform`: the error lists the supported ones; `escape`, `dateOp` and `pointer` are not
-  implemented.
+- `the transform … is not one this engine runs`: the check lists the ones it does; `escape`,
+  `dateOp` and `pointer` are not implemented.
+- `imports "…": no StructureMap with that url was found` (a warning): the check cannot see that
+  map's groups, so a call to a group this map lacks is not checked; it fails at run time, at its rule.
 - `as` inside embedded FHIRPath: it is read as the target alias. Use `.as(Type)` there.
 - `the source is of type Observation, but group BpIntake takes src : QuestionnaireResponse`: the
   map's entry group declares its source's type, and the resource given is another (a type derived
