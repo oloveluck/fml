@@ -9,6 +9,7 @@
 (require racket/contract racket/string racket/list
          fhir/lang/support fhir/lang/declared
          (only-in fhir/result/result ok? err? ok-value err-error)
+         (only-in fhir/model/registry type-registered?)
          (only-in "parser/parse.rkt" parse-fml)
          (only-in "check.rkt" check-map)
          (only-in "error.rkt" fml-error-diagnostic fml-error-message))
@@ -23,7 +24,12 @@
   (cond
     [(err? r) (define e (err-error r))
               (list (or (fml-error-diagnostic e) (positionless 'fml 'parse (fml-error-message e) path)))]
-    [else (check-map (ok-value r) #:source (path-string path))]))
+    [else
+     ;; the checker's types are the registered FHIR version's, R5 when none is yet (as the `#lang
+     ;; fml` reader does): in the language server no version is loaded, and without one every type
+     ;; is unknown — a map writing `tgt.gendr` had no finding in the editor
+     (unless (type-registered? 'Patient) (dynamic-require 'fhir/r5/schemas #f))
+     (check-map (ok-value r) #:source (path-string path))]))
 
 ;; the declarations: the map is its name with the url as its id, so `imports "url"` finds it
 (define declarations
@@ -70,7 +76,13 @@
 (define support (lang-support "fml" diagnose project-files entities hover definition completion))
 
 (module+ test
-  (require rackunit)
+  (require rackunit (only-in fhir/diagnostic diagnostic-message diagnostic-loc loc-line))
+  ;; a document's findings include what its structures decide (an element the type lacks), in a
+  ;; process that has loaded no FHIR version: the language server's
+  (let ([ds (diagnose "/// url = \"http://example.org/m\"\n/// name = \"M\"\ngroup g(source s : Patient, target t : Patient) { s.gender as g -> t.gendr = g; }\n"
+                      "/tmp/nowhere/t.map")])
+    (check-equal? (map diagnostic-message ds) '("`gendr` is not an element of Patient (did you mean `gender`?)"))
+    (check-equal? (loc-line (diagnostic-loc (car ds))) 3))
   (define fml "map \"http://x/StructureMap/m\" = \"MyMap\"\nuses \"http://hl7.org/fhir/StructureDefinition/Patient\" alias Patient as source\nimports \"http://x/StructureMap/other\"\ngroup main(source src : Patient, target tgt) {\n  src -> tgt then helper(src, tgt);\n}\ngroup helper(source s, target t) {\n}\n")
   (define es (entities fml "/tmp/nowhere/m.map"))
   (check-equal? (map entity-name es) '("MyMap" "Patient" "http://x/StructureMap/other" "main" "helper"))

@@ -269,3 +269,9 @@ says a rule wrote nothing because the lenient read dropped its value, for `raco 
 --examples` as for `transform #:validate` (base.rkt passes its drops instead of rewriting the
 message). The fhir-test-cases suite skips 4 tests (an XML expected output, or a map given as
 StructureMap JSON): the tool's count, where the note above says "4 + 1".
+
+**The editor checks against the structures** (2026-11-13): `support.rkt`'s `diagnose` loads the R5
+types when no FHIR version is registered (as the `#lang fml` reader does). In the language server's
+process none is, so `check-map` knew no type and a map writing `tgt.gendr` had no finding in the
+editor or from `raco fhir-lsp check` (found running the manual's editor configurations in Neovim).
+
