@@ -98,7 +98,7 @@
               [named (in-value (use-fhir-version (fml-use-url u)))]
               #:when (and here named (not (equal? named here))
                           (type-registered? (string->symbol (url-leaf (fml-use-url u))))))
-    (finding c (cx-map c) 'warning
+    (finding c u 'warning
              "uses ~s names FHIR ~a: here ~a is FHIR ~a's (one FHIR version to a process), and the map is checked and run against that"
              (fml-use-url u) named (url-leaf (fml-use-url u)) here)))
 
@@ -179,10 +179,18 @@
 ;; unsupported-transform : cx target -> (listof diagnostic)
 (define (unsupported-transform c t)
   (match (fml-target-transform t)
-    [(fml-invoke (? string? name) _)
+    [(fml-invoke (? string? name) args)
      (findings-if (not (member name (transform-names))) c t
-                  "the transform ~a is not one this engine runs (it runs: ~a)" name (string-join (transform-names) " "))]
+                  "the transform ~a is not one this engine runs (it runs: ~a)~a" name (string-join (transform-names) " ")
+                  ;; a name the specification's table does not have is most likely FHIRPath's
+                  (if (member name specified-transforms)
+                      ""
+                      (format "; a FHIRPath function is written in parentheses: `= (~a(~a))`" name (if (null? args) "" "…"))))]
     [_ '()]))
+;; the transforms of the specification's table (the code system http://hl7.org/fhir/map-transform)
+(define specified-transforms
+  '("create" "copy" "truncate" "escape" "cast" "append" "translate" "reference" "dateOp" "uuid" "pointer" "evaluate"
+    "cc" "c" "qty" "id" "cp"))
 
 ;; a target clause: a target context in scope, the element on its type, a value that fits; `as` binds
 (define (target-clause c t sc)

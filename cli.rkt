@@ -25,12 +25,13 @@
          (only-in fml/check check-map check-map/examples profiles-from)
          (only-in racket/list append-map)
          (only-in fhir/diagnostic diagnostic-severity)
-         (only-in "error.rkt" fml-error-string fml-error-diagnostic fml-error-message)
+         (only-in "error.rkt" fml-error-diagnostic fml-error-message)
          (only-in fhir/diagnostic diagnostic diagnostic-loc loc loc-source emit-diagnostics format-flag
                   exn:fail:diagnostic? exn:fail:diagnostic-diagnostic)
          (only-in fhir/serialize/from-json from-json)
-         (only-in fhir/serialize/lenient lenient-drops drop->string drops-message)
-         (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
+         (only-in fhir/serialize/lenient lenient-drops drops-message)
+         (only-in fhir/data-source current-data-source)
+         (only-in fml/registry structures-source)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
 
 (provide compile-file transform-file parse-corpus-dir check-file decompile-file)
@@ -70,10 +71,7 @@
 (define (transform-file file src-file [structures #f] #:indent [indent #f])
   (dynamic-require 'fhir/r5/schemas #f)                 ; the source resource must build as a typed node
   (define m (parse-file file))
-  (parameterize ([current-data-source
-                  (cond [(not structures) (current-data-source)]
-                        [(directory-exists? structures) (directory->data-source structures)]
-                        [else (resources->data-source (list (call-with-input-file structures read-json)))])])
+  (parameterize ([current-data-source (structures-source structures)])
     (uses-types m)
     (define src (call-with-input-file src-file read-json))
     (define r (from-json src #:lenient? #t))
@@ -107,10 +105,7 @@
   (define examples (for/list ([f (in-list example-files)]) (call-with-input-file f read-json)))
   ;; a profile is a StructureDefinition file, an FSH project (its profiles), or a canonical
   (define (profiles) (append-map profiles-from (hash-ref opts "--profile" '())))
-  (parameterize ([current-data-source
-                  (cond [(not structures) (current-data-source)]
-                        [(directory-exists? structures) (directory->data-source structures)]
-                        [else (resources->data-source (list (call-with-input-file structures read-json)))])])
+  (parameterize ([current-data-source (structures-source structures)])
     (define held (profiles))
     (define ds (append (check-map m #:source file)
                        (if (null? examples) '() (check-map/examples m examples #:profiles held #:source file #:names example-files))))

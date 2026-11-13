@@ -24,7 +24,7 @@
 ;;;
 ;;; Laws (tests/print-test.rkt, over the corpora): the text parses; it means the map
 ;;; (fml->structuremap of the parsed text is fml->structuremap of the map); printed again it is the
-;;; same text; and lint.rkt finds nothing in it but those two forms.
+;;; same text; and parser/parse.rkt's `specification-notes` finds nothing in it but those two forms.
 
 (require racket/contract racket/list racket/match racket/string
          "parser/ast.rkt"

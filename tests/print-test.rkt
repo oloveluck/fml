@@ -7,7 +7,9 @@
 ;;; command line's `--decompile`.
 
 (require rackunit racket/runtime-path racket/port racket/file json
-         (only-in "matchbox-harness.rkt" print-corpus print-structuremaps tally-passed tally-total tally-failures)
+         (only-in "matchbox-harness.rkt" print-corpus print-structuremaps printed-outcome tally-total tally-failures)
+         (only-in fhir/spec-package spec-package-path)
+         (only-in fhir/package read-package)
          (only-in "../cli.rkt" decompile-file)
          (only-in "../parser/parse.rkt" parse-fml specification-notes)
          (only-in "../structuremap.rkt" fml->structuremap structuremap->fml)
@@ -16,6 +18,22 @@
 (define-runtime-path matchbox "vendor/matchbox")
 
 (define (all-pass t) (check-equal? (tally-failures t) '()) (tally-total t))
+
+;; HL7's own StructureMap resources — the examples of the R4 and R5 core packages and of CRMI,
+;; when fhir-spec is installed — hold the same laws (supplyrequest-transform did not: a constant
+;; written as an `evaluate` of a quoted string came back as a `copy`, and its `(now())` as a
+;; transform named `now`)
+(for ([package '("hl7.fhir.r4.core.tgz" "hl7.fhir.r5.core.tgz" "hl7.fhir.uv.crmi-2.0.0.tgz")])
+  (define tgz (spec-package-path package #:optional? #t))
+  (when tgz
+    (define-values (_manifest resources examples)
+      (read-package tgz #:select (lambda (name) (regexp-match? #rx"StructureMap-[^/]*[.]json$" name))))
+    (define maps (for/list ([e (in-list (append resources examples))]
+                            #:when (and (hash? (cdr e)) (equal? (hash-ref (cdr e) 'resourceType #f) "StructureMap")))
+                   e))
+    (check-true (pair? maps) package)
+    (for ([e (in-list maps)])
+      (check-equal? (printed-outcome (structuremap->fml (cdr e))) 'pass (format "~a ~a" package (car e))))))
 (check-equal? (all-pass (print-corpus structure-mapping)) 15)
 (check-equal? (all-pass (print-corpus matchbox)) 43)
 (check-equal? (all-pass (print-structuremaps matchbox)) 25)

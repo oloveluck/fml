@@ -75,6 +75,8 @@
           ;; print-structuremaps : dir -> tally   the same for every StructureMap RESOURCE under dir
           ;; (the reference's, R4-flavoured): resource -> text -> resource
           [print-structuremaps (-> path-string? tally?)]
+          ;; printed-outcome : fml-map -> 'pass | reason   those laws, for one map
+          [printed-outcome (-> fml-map? (or/c 'pass string?))]
           ;; compare-reference-structuremaps : matchbox-dir -> tally   our StructureMap for each
           ;; tutorial map against the reference's, rule by rule (metadata and R4-only fields dropped,
           ;; FHIRPath text normalised through parse and print)

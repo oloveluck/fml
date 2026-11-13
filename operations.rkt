@@ -15,7 +15,7 @@
          fhir/operation
          (only-in fhir/result/result ok? ok-value err-error)
          (only-in fhir/serialize/from-json from-json)
-         (only-in fhir/diagnostic diagnostic-message exn:fail:diagnostic? exn:fail:diagnostic-diagnostic diagnostics->operation-outcome)
+         (only-in fhir/diagnostic exn:fail:diagnostic? exn:fail:diagnostic-diagnostic diagnostics->operation-outcome)
          (only-in "error.rkt" fml-error-string)
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap structuremap->fml)

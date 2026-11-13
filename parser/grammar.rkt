@@ -49,7 +49,7 @@ type-mode       : /"<<" ("types" | "type" "+") /">>"
 
 frule           : rule-sources (/"->" rule-targets)? dependent? rule-name? /";"
 ;; the text writes a rule's name in double quotes, the g4 as a bare id (never a keyword)
-rule-name       : DELIM | STRING | IDENTIFIER
+rule-name       : DELIM | STRING | IDENTIFIER | "type"
 ;; the text's short form of the identity transform: `src -> tgt: type, subtype;` is
 ;; `src.type -> tgt.type; src.subtype -> tgt.subtype;`
 short-rule      : rule-context /"->" rule-context /":" identifier (/"," identifier)* /";"

@@ -6,14 +6,14 @@
 ;;; composes with the other FHIR languages' modules; `#:structures` gives the StructureDefinitions of the
 ;;; map's logical models (a list of jsexprs, or a data source). Run the file to print the StructureMap.
 
-(require (for-syntax racket/base syntax/parse (only-in fml/parser/ast fml-map?)) json
+(require (for-syntax racket/base syntax/parse (only-in fml/parser/ast fml-map?))
          (only-in fml/structuremap fml->structuremap)
          (only-in fml/transform run-map uses-types register-structure-map! current-empty-targets)
          (only-in fhir/registry register-resources!)
-         (only-in fhir/data-source current-data-source data-source? resources->data-source)
-         (only-in fhir/serialize/from-json from-json)
+         (only-in fhir/data-source current-data-source)
+         (only-in fml/registry structures-source resource-node)
          (only-in fhir/serialize/fhir-json write-fhir-json)
-         (only-in fhir/serialize/lenient lenient-drops drop->string drops-message)
+         (only-in fhir/serialize/lenient lenient-drops drops-message)
          (only-in racket/string string-join string-replace)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?)
@@ -79,15 +79,12 @@
         [(ormap (lambda (p) (regexp-match? #rx"r6[.]core" p)) pkgs) "R6"]
         [else "R5 (5.0.0)"]))
 
-;; as-node : FHIR JSON | typed node -> typed node   (read leniently into the registered tower; FML's
-;; engine needs one — fhir/r5/schemas when nothing else registered a tower)
+;; as-node : FHIR JSON | typed node -> typed node   read leniently into the registered types (FML's
+;; engine needs them), what the read left out reported
 (define (as-node src [strict? #f])
-  (cond [(fhir? src) src]
-        [else (dynamic-require 'fhir/r5/schemas #f)
-              (define r (from-json src #:lenient? #t))
-              (unless (ok? r) (raise-argument-error 'transform "a FHIR resource" src))
-              (report-drops! src (ok-value r) strict?)
-              (ok-value r)]))
+  (define node (resource-node src 'transform))
+  (unless (fhir? src) (report-drops! src node strict?))
+  node)
 
 ;; report-drops! : JSON node strict? -> void   a value of the source the lenient read left out (a date
 ;; that is not a date, an element the R5 type lacks) is said — the map never sees it, so a later
@@ -126,10 +123,7 @@
         (define structuremap (fml->structuremap fml))
         (register-resources! (list structuremap) #:source (variable-reference->module-source (#%variable-reference)))
         (define (transform src #:structures [structures #f] #:strict? [strict? #f] #:validate [validate #f])
-          (parameterize ([current-data-source
-                          (cond [(not structures) (current-data-source)]
-                                [(data-source? structures) structures]
-                                [else (resources->data-source structures)])])
+          (parameterize ([current-data-source (structures-source structures)])
             (uses-types fml)                                 ; the logical models, before the source is read
             (define node (as-node src strict?))
             (parameterize ([current-empty-targets (make-hasheq)])   ; which values came out empty

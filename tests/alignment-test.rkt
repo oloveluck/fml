@@ -10,7 +10,7 @@
 ;;; The transform table is the specification's (the StructureMap page; the definitions quoted here
 ;;; are those of the R5 code system http://hl7.org/fhir/map-transform).
 
-(require rackunit racket/string racket/list json
+(require rackunit racket/string racket/list racket/file racket/runtime-path racket/match json
          (only-in fhir/r5/schemas)
          fml/parser/parse fml/parser/ast
          (only-in fml/error fml-error-diagnostic)
@@ -59,6 +59,30 @@
   (check-equal? (hash-ref (car (hash-ref (car (hash-ref (car (rules-of (fml->structuremap m))) 'target)) 'parameter)) 'valueString) "@2023-10-21")
   (check-regexp-match #rx"where [(]b < @2000-01-01[)]" (fml->text m)))
 
+;; an expression in parentheses is FHIRPath, whatever it is: `(iif(…))` and `(today())` call
+;; FHIRPath's functions (a parenthesized call was read as the transform of that name: "the
+;; transform iif is not one this engine runs"); without parentheses a call is still a transform
+(let ([m (a-map "Patient" "Patient"
+                "src.gender as g -> tgt.gender = (iif(g = 'female', 'male', 'female'));"
+                "src -> tgt.birthDate = (today());"
+                "src.id as i -> tgt.id = truncate(i, 2);")])
+  (check-match (map fml-target-transform (append-map fml-rule-targets (fml-group-rules (car (fml-map-groups m)))))
+               (list (? fml-fhirpath?) (? fml-fhirpath?) (fml-invoke "truncate" _)))
+  (check-equal? (filter (lambda (d) (eq? (diagnostic-severity d) 'error)) (check-map m)) '())
+  (define out (run m (patient 'id "abcdef" 'gender "female")))
+  (check-equal? (list (hash-ref out 'gender) (hash-ref out 'id)) '("male" "ab"))
+  (check-regexp-match #px"^[0-9]{4}-[0-9]{2}-[0-9]{2}$" (hash-ref out 'birthDate))
+  ;; and it is written back in parentheses, the same map
+  (check-regexp-match #rx"tgt.gender = [(]iif[(]g = 'female', 'male', 'female'[)][)];\n  src -> tgt.birthDate = [(]today[(][)][)];" (fml->text m))
+  (check-equal? (fml->structuremap (parsed (fml->text m))) (fml->structuremap m))
+  (check-equal? (fml-map-groups (structuremap->fml (fml->structuremap m))) (fml-map-groups m)))
+
+;; without the parentheses it is an invocation, of a transform there is not: the check says how
+(check-match (for/list ([d (in-list (check-map (a-map "Patient" "Patient" "src -> tgt.birthDate = today();")))]
+                        #:when (eq? (diagnostic-severity d) 'error))
+               (diagnostic-message d))
+             (list (regexp #rx"the transform today is not one this engine runs.*; a FHIRPath function is written in parentheses: `= [(]today[(][)][)]`$")))
+
 ;; a name never takes the `+` after it: `(a+1)` is an addition (the lexer read `a+` as a name, for
 ;; the group flag `type+`), and the flag is still read
 (let ([m (a-map "Patient" "Patient" #:flags " <<type+>>" "src.multipleBirth as n -> tgt.multipleBirth = (n+1);")])
@@ -88,6 +112,15 @@
              (list (cons 6 (regexp #rx"^`= n.family & '!'`: the specification writes an expression in parentheses — `= [(]n.family & '!'[)]`$"))
                    (cons 7 (regexp #rx"^'copyGender': the specification writes a rule's name in double quotes — \"copyGender\"$"))
                    (cons 8 (regexp #rx"^`names[(]… n.first[(][)] …[)]`: a group is given variables and literals"))))
+;; on a file with Windows line ends too: the note quotes its own text (a position counts `\r\n` as
+;; one character; the text was read some lines up — "`where then {`")
+(check-match (notes (parsed (string-replace (text-of-map "Patient" "Patient"
+                                                         "src.name as n where n.family = 'Lee' -> tgt.name = n;"
+                                                         "src.gender as g where g = 'female' -> tgt.gender = g 'named';")
+                                            "\n" "\r\n")))
+             (list (cons 6 (regexp #rx"^`where n.family = 'Lee'`: the specification writes the expression in parentheses"))
+                   (cons 7 (regexp #rx"^`where g = 'female'`: "))
+                   (cons 7 (regexp #rx"^'named': the specification writes a rule's name in double quotes"))))
 ;; and not the forms it has: a literal of any kind, a variable, a path of names, an invocation, an
 ;; expression in parentheses; a variable and a literal given to a group
 (check-equal? (notes (a-map "Patient" "Patient" #:after "group names(source n, source s, target t) { n.family as f -> t.family = f; }\n"
@@ -144,6 +177,20 @@
                 (hasheq 'resourceType "Patient" 'gender "female" 'name (list (hasheq 'family "Lee"))))
   (check-regexp-match #rx"then names[(]n, t[)] \"names\";\n  src.gender -> tgt.gender \"gender\";" (fml->text m)))
 
+;; HL7's own example (StructureMap-supplyrequest-transform, in the core package) writes a constant
+;; as an `evaluate` of a quoted string, and a `copy` with no parameter: its text means the resource
+;; (the constant came back as `('draft')`, which reads as the literal — another StructureMap)
+(let* ([m (structuremap->fml
+           (reference-map (hasheq 'name "status" 'source (list (hasheq 'context "src" 'element "id" 'variable "a"))
+                                  'target (list (hasheq 'context "tgt" 'element "gender" 'transform "evaluate"
+                                                        'parameter (list (hasheq 'valueString "'female'")))))
+                          (hasheq 'name "birth" 'source (list (hasheq 'context "src" 'element "birthDate" 'variable "a"))
+                                  'target (list (hasheq 'context "tgt" 'element "birthDate" 'transform "copy")))))]
+       [text (fml->text m)])
+  (check-regexp-match #rx"src.id as a -> tgt.gender = 'female' \"status\";\n  src.birthDate as a -> tgt.birthDate = copy[(][)] \"birth\";" text)
+  (check-equal? (fml->structuremap (parsed text)) (fml->structuremap m))
+  (check-equal? (hash-ref (run m (patient 'id "p1")) 'gender) "female"))
+
 ;; ==== 3. the engine ===============================================================================
 ;; a condition is read as FHIRPath reads a collection where a Boolean is expected: one Boolean is
 ;; its value, one item of another kind is true, nothing or several items is not. (Every condition
@@ -166,6 +213,19 @@
   (check-true (holds "src.gender"))                       ; one item that is no Boolean
   (check-false (holds "src.id"))                          ; nothing
   (check-false (holds "src.name")))                       ; several items
+
+;; matchbox's own maps of that kind now write what they say (they ran, and wrote nothing): the
+;; Patient entry copied twice, the second copy alone made active; the sections of the reports a
+;; Composition refers to
+(define-runtime-path matchbox "vendor/matchbox")
+(define (matchbox-run map-file source-file)
+  (run (parsed (file->string (build-path matchbox map-file)))
+       (node (call-with-input-file (build-path matchbox source-file) read-json))))
+(check-equal? (for/list ([e (in-list (hash-ref (matchbox-run "copyaliasingbug.map" "copyaliasingbug-source.json") 'entry))])
+                (hash-ref (hash-ref e 'resource) 'active))
+              '(#f #t))
+(check-equal? (map (lambda (s) (hash-ref s 'title)) (hash-ref (matchbox-run "bundle-resolve.map" "bundle-resolve.src.json") 'section))
+              '("lab report 2" "lab report 5"))
 
 ;; what is created into an element of an abstract type has its own type's elements: a Patient
 ;; created into Bundle.entry.resource has a `name` that repeats (it was written as one object)

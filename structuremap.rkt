@@ -326,7 +326,12 @@
       [(and (equal? tr "copy") (= 1 (length ps)) (jref (car ps) 'valueId)) => fml-var]
       [(and (equal? tr "copy") (= 1 (length ps)) (jref (car ps) 'valueString)) => fml-literal]
       [(and (equal? tr "copy") (= 1 (length ps))) (fml-fhirpath (parse-fhirpath (parameter-text (car ps))))]
-      [(and (equal? tr "evaluate") (= 1 (length ps)) (jref (car ps) 'valueString)) => (lambda (s) (fml-fhirpath (parse-fhirpath s)))]
+      ;; `(expression)`; an expression that is one string literal is that literal, as the parser
+      ;; reads `= ('draft')` (HL7's own example map writes its constants so)
+      [(and (equal? tr "evaluate") (= 1 (length ps)) (jref (car ps) 'valueString))
+       => (lambda (s)
+            (define ast (parse-fhirpath s))
+            (if (and (fp-lit? ast) (string? (fp-lit-value ast))) (fml-literal (fp-lit-value ast)) (fml-fhirpath ast)))]
       [else (fml-invoke tr (for/list ([p (in-list ps)] [i (in-naturals 1)]) (arg p (= i (length ps)))))]))
   (define share (and (member "share" (jlist t 'listMode)) (or (jref t 'listRuleId) #t)))
   (define mode (for/or ([m (in-list (jlist t 'listMode))]) (and (member m '("first" "last" "single")) (string->symbol m))))

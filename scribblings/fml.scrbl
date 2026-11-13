@@ -705,8 +705,7 @@ block in the map, or a ConceptMap resource the terminology service can find.}
 written.}]
 
 An error while running names the rule and shows its line. For an unknown transform it lists the
-ones there are. A call to a group that does not exist is the exception: it names the groups there
-are, but comes without a line. The check catches it beforehand.
+ones there are; for a call to a group that does not exist, the groups there are.
 
 @subsection[#:tag "transforms"]{The built-in helpers (transforms)}
 
@@ -716,18 +715,20 @@ This table is every transform a rule can use on the right of the arrow.
 (list (list @bold{transform} @bold{what it gives})
       (list @c{create('Type')} "a new, empty value of that type")
       (list @c{copy(v)} "the value, unchanged")
-      (list @c{cast(v, 'type')} "the value converted to another simple type; an error when it cannot be")
+      (list @c{cast(v, 'type')} @elem{the value converted to another simple type; an error when it cannot be. @c{cast(v)} converts to the kind the target element holds})
       (list @c{evaluate(v, expression)} @elem{what a FHIRPath expression finds, starting from @tt{v}; @c{(expression)} alone is the usual way to write one})
       (list @c{truncate(v, n)} "the first n characters of a text")
       (list @c{append(a, b, …)} "the texts joined")
-      (list @c{reference(v)} @elem{the text @tt{Type/id} that refers to a resource: one read from the source, or one the map made})
+      (list @c{reference(v)} @elem{the text @tt{Type/id} that refers to a resource: one read from the source (it must have an id), or one the map made (it is given a random id when it has none)})
+      (list @c{pointer(v)} @elem{the text @tt{urn:uuid:id} that refers to a resource, for resources whose ids are UUIDs (the entries of a Bundle)})
+      (list @c{escape(v, 'plain', 'json')} @elem{a text changed from one kind of escaping to another. The kinds are @tt{plain}, @tt{java}, @tt{xml} and @tt{json}})
       (list @c{translate(v, map, 'code')} @elem{what a table of code translations gives for this code. The table is @c{'#name'} for a @tt{conceptmap} block in the map, else the address of a ConceptMap. The last input says what to give back: @tt{code}, @tt{system}, @tt{display}, @tt{Coding} or @tt{CodeableConcept}})
       (list @c{uuid()} "a new unique identifier")
       (list @c{c(system, code, display)} "a Coding: one code from one code system; the display is optional")
       (list @c{cc(system, code, display)} @elem{a CodeableConcept: a coded concept; the display is optional. @c{cc(text)} gives one with only a text})
       (list @c{qty(value, unit, system, code)} @elem{a Quantity: a number with its unit; the system and code are optional. @c{qty('5.4 mg')} reads one from a text})
-      (list @c{id(system, value)} "an Identifier; a third input is its type, as text")
-      (list @c{cp(system, value)} @elem{a ContactPoint: a phone number or an e-mail address. @c{cp(value)} leaves the system out}))]
+      (list @c{id(system, value)} @elem{an Identifier; a third input is its type, a code of FHIR's identifier types (@tt{MR}, a medical record number)})
+      (list @c{cp(system, value)} @elem{a ContactPoint: a phone number or an e-mail address. @c{cp(value)} takes the system from the value when it shows one: an e-mail address, a web address, a phone number}))]
 
 @section{In an editor, and for an AI agent}
 
@@ -752,11 +753,17 @@ is @racketmodname[fml/workspace].
 @section{Limits}
 
 @itemlist[
-@item{@bold{Three transforms are missing.} @tt{escape}, @tt{dateOp} and @tt{pointer} are not
-implemented. The check reports a rule that uses one, with the list of the ones there are.}
+@item{@bold{One transform is missing.} @tt{dateOp} is not implemented: the specification names it
+and leaves its inputs "to be documented". The check reports a rule that uses it, with the list of
+the ones there are. Date arithmetic is written in FHIRPath: @c{(d + 5 days)}.}
 @item{@bold{One version of FHIR.} Maps run over FHIR R5. Data from another version is read as far
 as it fits, and the run names each value it could not read. An element R5 dropped (R4's
-@tt{Composition.code}) is not an element here.}
+@tt{Composition.code}) is not an element here. A map that names another version
+(@c{uses "…/Patient|4.0.1"}) is checked and run against R5's type of that name, and the check says
+so in a warning.}
+@item{@bold{A condition that finds several things does not hold.} A @tt{where} or @tt{check} holds
+when its FHIRPath gives @tt{true}, or one thing that is not a Boolean. It does not hold when it
+gives @tt{false}, nothing, or several things.}
 @item{@bold{JSON only.} Data is read and written as JSON. Maps that produce XML documents, such as
 CDA, are not supported.}
 @item{@bold{An import that cannot be found is a warning.} When no registered map, data source or

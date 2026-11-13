@@ -14,10 +14,11 @@
 ;;; SMap is (smap ast source target): the AST and the type symbols of its entry group.
 
 (require racket/contract racket/string
+         (only-in json read-json)
          "parser/ast.rkt"
          (only-in "structuremap.rkt" structuremap->fml)
-         (only-in "transform.rkt" run-map uses-types resolve-structure-map registered-structure-maps)
-         (only-in fhir/data-source current-data-source data-source? resources->data-source)
+         (only-in "transform.rkt" run-map uses-types resolve-structure-map registered-structure-maps group-param url-leaf)
+         (only-in fhir/data-source current-data-source data-source? resources->data-source directory->data-source)
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok? ok-value)
          (only-in fhir/model/node fhir?))
@@ -28,23 +29,32 @@
           [smap-ast (-> smap? fml-map?)]
           [smap-source (-> smap? (or/c symbol? #f))]
           [smap-target (-> smap? (or/c symbol? #f))]
-          [compose-maps (-> smap? smap? smap?)]))
+          [compose-maps (-> smap? smap? smap?)]
+          ;; structures-source : Structures -> data-source   where a map's `uses` resolve. A
+          ;; Structures is #f (the current data source), a data source, a list of
+          ;; StructureDefinitions, or a path: a JSON file (a resource) or a directory of them
+          [structures-source (-> (or/c #f data-source? (listof hash?) path-string?) data-source?)]
+          ;; resource-node : source who -> typed node   FHIR JSON read (leniently) into the
+          ;; registered types — R5's when none is registered yet; a typed node as it is
+          [resource-node (-> any/c symbol? fhir?)]))
 
 (struct smap (ast source target run)
   #:property prop:procedure (lambda (self src #:structures [structures #f]) ((smap-run self) src structures)))
 
+(define (structures-source structures)
+  (cond [(not structures) (current-data-source)]
+        [(data-source? structures) structures]
+        [(list? structures) (resources->data-source structures)]
+        [(directory-exists? structures) (directory->data-source structures)]
+        [else (resources->data-source (list (call-with-input-file structures read-json)))]))
 (define (with-structures structures thunk)
-  (parameterize ([current-data-source
-                  (cond [(not structures) (current-data-source)]
-                        [(data-source? structures) structures]
-                        [else (resources->data-source structures)])])
-    (thunk)))
+  (parameterize ([current-data-source (structures-source structures)]) (thunk)))
 
-(define (as-node src)
+(define (resource-node src who)
   (cond [(fhir? src) src]
         [else (dynamic-require 'fhir/r5/schemas #f)
               (define r (from-json src #:lenient? #t))
-              (if (ok? r) (ok-value r) (raise-argument-error 'structure-map "a FHIR resource" src))]))
+              (if (ok? r) (ok-value r) (raise-argument-error who "a FHIR resource" src))]))
 
 (define (structure-map ref #:structures [structures #f])
   (define ast
@@ -57,20 +67,19 @@
   (smap ast source target
         (lambda (src structures*)
           (with-structures (or structures* structures)
-            (lambda () (uses-types ast) (run-map ast (as-node src)))))))
+            (lambda () (uses-types ast) (run-map ast (resource-node src 'structure-map)))))))
 
 ;; the entry group's parameter types: declared on the parameters, else from `uses … as source|target`
 (define (entry-types ast)
   (define types (uses-types ast))
   (define g (and (pair? (fml-map-groups ast)) (car (fml-map-groups ast))))
   (define (param-type mode)
-    (define p (and g (findf (lambda (p) (eq? (fml-param-mode p) mode)) (fml-group-params g))))
+    (define p (and g (group-param g mode)))
     (define u (findf (lambda (u) (eq? (fml-use-mode u) mode)) (fml-map-uses ast)))
     (or (and p (fml-param-type p) (hash-ref types (fml-param-type p) #f))
-        (and u (hash-ref types (or (fml-use-alias u) (last-segment (fml-use-url u))) #f))
+        (and u (hash-ref types (or (fml-use-alias u) (url-leaf (fml-use-url u))) #f))
         (and p (fml-param-type p) (string->symbol (fml-param-type p)))))
   (values (param-type 'source) (param-type 'target)))
-(define (last-segment url) (car (reverse (string-split (car (regexp-split #rx"[|]" url)) "/"))))
 
 (define (compose-maps a b)
   (unless (and (smap-target a) (smap-source b) (eq? (smap-target a) (smap-source b)))

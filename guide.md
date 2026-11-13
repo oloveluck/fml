@@ -30,12 +30,21 @@ group main(source src : QuestionnaireResponse, target tgt : Patient) {
 }
 ```
 A rule reads `source -> target`: `src.item as item` binds each matching element, `where` filters
-(FHIRPath, evaluated with the alias bound), `-> tgt.x = v` writes the target. `then { … }` nests
+(FHIRPath, evaluated with the alias bound; a single Boolean is its value, a single item of another
+kind holds — `where (item.answer.value.ofType(Coding))` — and nothing, or several items, does not),
+`-> tgt.x = v` writes the target. `then { … }` nests
 rules; `then g(a, b)` calls another group. A value is a variable, a literal, FHIRPath in
-parentheses, or a transform: `create('Type')`, `copy`, `cast`, `evaluate`, `translate`, `uuid`,
-`reference`, and the constructors `c` (Coding), `cc` (CodeableConcept), `qty` (Quantity), `id`,
-`cp`, `append`. A choice element reads whichever variant is present (`ans.value`) and writes the
-variant of the value's type (`tgt.effective = d` writes `effectiveDateTime` for a dateTime). A string
+parentheses, or a transform: `create('Type')`, `copy`, `cast(v, 'type')` (`cast(v)` takes the
+target element's own type), `evaluate`, `truncate`, `translate`, `uuid`, `escape(v, 'plain',
+'json')` (from one kind of escaping to another: `plain`, `java`, `xml`, `json`), `reference(r)`
+(`Type/id`) and `pointer(r)` (`urn:uuid:<id>`) of a resource — one the map is building gets a
+random id when it has none — and the constructors `c` (Coding), `cc` (CodeableConcept), `qty`
+(Quantity), `id` (Identifier; a third argument is its type code), `cp` (ContactPoint; `cp(value)`
+takes the system from the value: an e-mail address, a web address, a phone number), `append`. A
+choice element reads whichever variant is present (`ans.value`) and writes the variant of the
+value's type (`tgt.effective = d` writes `effectiveDateTime` for a dateTime, `tgt.value = (a + 1)`
+`valueInteger`). What `create('Patient')` makes in an element that holds any resource
+(`Bundle.entry.resource`) is a Patient: its `name` repeats. A string
 at the end of a rule names it (in double quotes). The file begins with the map's metadata, one
 `/// element = value` line each: `url` and `name` are required, any other element of the
 StructureMap may follow (`/// title = 'Intake'`, `/// status = 'active'`; a status not stated is
@@ -227,8 +236,17 @@ instance of a logical model names its type in `resourceType` (`{"resourceType": 
   receives the whole target.
 - A result fails validation: the problem names the rule that wrote the element (when one did); a
   required element no rule writes is reported without a line.
-- `the transform … is not one this engine runs`: the check lists the ones it does; `escape`,
-  `dateOp` and `pointer` are not implemented.
+- `the transform … is not one this engine runs`: the check lists the ones it does. Of the
+  specification's transforms only `dateOp` is not run (the specification leaves its parameters "to
+  be documented"); date arithmetic is FHIRPath's: `(d + 5 days)`.
+- `` `= a.first() & 'x'`: the specification writes an expression in parentheses `` (a warning): a
+  value is a literal, a variable, an invocation, or FHIRPath in parentheses. Other warnings of the
+  kind: `where x` without parentheses, a rule's name in single quotes, an expression given to a
+  group (`then g(a.b, t)`: a StructureMap carries a variable or a literal there — bind it first).
+- `uses "…|4.0.1" names FHIR R4: here Patient is FHIR R5's` (a warning): one FHIR version is loaded
+  at a time, and the map is checked and run against that version's type of the same name.
+- `reference(src): the Patient has no id to refer to`: a source resource is referred to by its own
+  id; give it one, or refer to a resource the map creates.
 - `imports "…": no StructureMap with that url was found` (a warning): the check cannot see that
   map's groups, so a call to a group this map lacks is not checked; it fails at run time, at its rule.
 - `as` inside embedded FHIRPath: it is read as the target alias. Use `.as(Type)` there.

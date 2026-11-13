@@ -43,7 +43,7 @@
          (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
          (only-in fhir/terminology/service translate/json)
-         (only-in fhirpath/parser/ast fp-invoke fp-invoke? fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
+         (only-in fhirpath/parser/ast fp-invoke fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
          (only-in fhirpath/eval eval-fhirpath)
          (only-in fhirpath/print fhirpath->string)
          (only-in fhirpath/value item->system fp-long? fp-long-v)
@@ -402,23 +402,12 @@
 (define (rule-targets* r)
   (append (fml-rule-targets r) (append-map rule-targets* (fml-rule-nested r))))
 
-;; the elements a source clause matches: the context itself when no element; else each child,
-;; where-filtered, in the clause's list mode
+;; source-matches : ctx rule source scope -> (listof value)   what a source clause selects, in the
+;; order the language writes its parts: the element's values, counted against `min..max`; those of
+;; its `: type`; the `default` when there are none; those its `where` holds for; in its list mode
 (define (source-matches c r s sc)
-  (define context (lookup sc (fml-source-context s)))
-  (unless context (rule-error r "unbound source variable ~a" (fml-source-context s)))
-  (define present
-    (cond [(not (fml-source-element s)) (list context)]
-          [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
-                             (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
-          [else '()]))
-  ;; `min..max`: the element's cardinality in the source, or the transformation stops
-  (when (or (fml-source-min s) (fml-source-max s))
-    (define n (length present))
-    (define max (let ([m (fml-source-max s)]) (and m (not (equal? m "*")) (string->number m))))
-    (unless (and (>= n (or (fml-source-min s) 0)) (or (not max) (<= n max)))
-      (rule-error r "~a has ~a value~a, and the rule takes ~a..~a"
-                  (source-text s) n (if (= n 1) "" "s") (or (fml-source-min s) 0) (or (fml-source-max s) "*"))))
+  (define present (source-values r s sc))
+  (check-cardinality! r s (length present))
   ;; `: type`: only the elements of that type
   (define typed (if (fml-source-type s) (filter (lambda (e) (of-type? c e (fml-source-type s))) present) present))
   ;; `default (value)`: the value when the source has none, once
@@ -428,28 +417,51 @@
         typed))
   ;; `where` sees the rule's alias bound to the candidate (`src.a as a where (a.length() <= 20)`)
   (define (with-candidate e) (if (fml-source-variable s) (bind sc (fml-source-variable s) e) sc))
-  (define filtered
+  (define held
     (if (fml-source-where s)
         (filter (lambda (e) (fp-true? (fml-source-where s) e (with-candidate e))) base)
         base))
   ;; the source matched, and its `where` held for none: said at the targets this rule (and its nested
   ;; rules) would have written (the message blamed the input: "its source matched nothing")
-  (when (and (fml-source-where s) (pair? base) (null? filtered) (current-empty-targets))
+  (when (and (fml-source-where s) (pair? base) (null? held) (current-empty-targets))
     ;; every item the source matched, so the message can say what the tested field held
     (define reason (empty-where (fml-source-where s) (length base)
                                 (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))
                                 r))
     (for ([t (in-list (rule-targets* r))]) (note-empty! t reason)))
+  (in-list-mode r s held))
+
+;; source-values : rule source scope -> (listof value)   the context itself when the clause names no
+;; element; else the context's values of it (a choice element: whichever variant is there)
+(define (source-values r s sc)
+  (define context (lookup sc (fml-source-context s)))
+  (unless context (rule-error r "unbound source variable ~a" (fml-source-context s)))
+  (cond [(not (fml-source-element s)) (list context)]
+        [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
+                           (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
+        [else '()]))
+
+;; check-cardinality! : rule source count -> void   `min..max`: the element's cardinality in the
+;; source, or the transformation stops
+(define (check-cardinality! r s n)
+  (when (or (fml-source-min s) (fml-source-max s))
+    (define max (let ([m (fml-source-max s)]) (and m (not (equal? m "*")) (string->number m))))
+    (unless (and (>= n (or (fml-source-min s) 0)) (or (not max) (<= n max)))
+      (rule-error r "~a has ~a value~a, and the rule takes ~a..~a"
+                  (source-text s) n (if (= n 1) "" "s") (or (fml-source-min s) 0) (or (fml-source-max s) "*")))))
+
+;; in-list-mode : rule source (listof value) -> (listof value)   the values the clause's list mode keeps
+(define (in-list-mode r s vs)
   (case (fml-source-list-mode s)
-    [(first) (if (pair? filtered) (list (car filtered)) '())]
-    [(last) (if (pair? filtered) (list (last filtered)) '())]
-    [(not_first) (if (pair? filtered) (cdr filtered) '())]
-    [(not_last) (if (pair? filtered) (drop-right filtered 1) '())]
-    [(only_one) (if (> (length filtered) 1)
+    [(first) (if (pair? vs) (list (car vs)) '())]
+    [(last) (if (pair? vs) (list (last vs)) '())]
+    [(not_first) (if (pair? vs) (cdr vs) '())]
+    [(not_last) (if (pair? vs) (drop-right vs 1) '())]
+    [(only_one) (if (> (length vs) 1)
                     (rule-error r "~a.~a matches ~a elements, only_one allows one"
-                           (fml-source-context s) (fml-source-element s) (length filtered))
-                    filtered)]
-    [else filtered]))
+                                (fml-source-context s) (fml-source-element s) (length vs))
+                    vs)]
+    [else vs]))
 
 ;; source-text : source -> string   `src.value`, as a message names it
 (define (source-text s)
@@ -723,32 +735,17 @@
     [(? string? name) (value->jsexpr (lookup sc name))]          ; a variable, by name
     [(fml-fhirpath ast) (fp-scalar ast sc)]))
 
-;; translate : the value through an embedded conceptmap ('#name') or a ConceptMap the terminology
-;; service resolves; the mode picks what comes back: code, system, display, Coding, CodeableConcept
+;; translate : ctx rule value map-url mode -> jsexpr   the value through an embedded conceptmap
+;; ('#name') or a ConceptMap the terminology service resolves; the mode picks what comes back: code,
+;; system, display, Coding, CodeableConcept ('null when the map has nothing for the code)
 (define (translate c r v map-url mode)
   (define-values (code system)
     (cond [(hash? v) (values (hash-ref v 'code #f) (hash-ref v 'system #f))]
           [else (values (if (string? v) v (format "~a" v)) #f)]))
   (define-values (t-system t-code t-display)
-    (cond
-      [(regexp-match? #rx"^#" map-url)
-       (define cm (findf (lambda (cm) (equal? (fml-conceptmap-name cm) (substring map-url 1)))
-                         (fml-map-conceptmaps (ctx-map c))))
-       (unless cm (rule-error r "no conceptmap ~s in this map" map-url))
-       (define m (findf (lambda (m) (and (equal? (cm-mapping-code m) code)
-                                         (or (not system) (equal? (cm-mapping-source m) system))))
-                        (fml-conceptmap-mappings cm)))
-       (if m (values (cm-mapping-target m) (cm-mapping-target-code m) #f) (values #f #f #f))]
-      [else
-       (define ps (translate/json (current-terminology-resolver) map-url code system))
-       (define match-part
-         (for/first ([p (in-list (hash-ref ps 'parameter '()))] #:when (equal? (hash-ref p 'name #f) "match")) p))
-       (define coding
-         (and match-part
-              (for/first ([q (in-list (hash-ref match-part 'part '()))] #:when (equal? (hash-ref q 'name #f) "concept"))
-                (hash-ref q 'valueCoding #f))))
-       (if coding (values (hash-ref coding 'system #f) (hash-ref coding 'code #f) (hash-ref coding 'display #f))
-           (values #f #f #f))]))
+    (if (regexp-match? #rx"^#" map-url)
+        (embedded-translation c r (substring map-url 1) code system)
+        (service-translation map-url code system)))
   (cond
     [(not t-code) 'null]
     [else
@@ -756,9 +753,29 @@
        [("code") t-code]
        [("system") (or t-system 'null)]
        [("display") (or t-display 'null)]
-       [("Coding") (drop-nulls (hasheq 'system t-system 'code t-code 'display t-display))]
-       [("CodeableConcept") (hasheq 'coding (list (drop-nulls (hasheq 'system t-system 'code t-code 'display t-display))))]
+       [("Coding") (coding t-system t-code t-display)]
+       [("CodeableConcept") (hasheq 'coding (list (coding t-system t-code t-display)))]
        [else t-code])]))
+
+;; embedded-translation, service-translation : … code system|#f -> (values system code display), each
+;; #f when unknown: the code's mapping in the map's own `conceptmap` block; the $translate match of
+;; a ConceptMap the terminology service resolves
+(define (embedded-translation c r name code system)
+  (define cm (or (findf (lambda (cm) (equal? (fml-conceptmap-name cm) name)) (fml-map-conceptmaps (ctx-map c)))
+                 (rule-error r "no conceptmap ~s in this map" (string-append "#" name))))
+  (define m (findf (lambda (m) (and (equal? (cm-mapping-code m) code)
+                                    (or (not system) (equal? (cm-mapping-source m) system))))
+                   (fml-conceptmap-mappings cm)))
+  (if m (values (cm-mapping-target m) (cm-mapping-target-code m) #f) (values #f #f #f)))
+(define (service-translation map-url code system)
+  (define (named name parts) (findf (lambda (p) (equal? (hash-ref p 'name #f) name)) parts))
+  (define ps (translate/json (current-terminology-resolver) map-url code system))
+  (define match-part (named "match" (hash-ref ps 'parameter '())))
+  (define concept (and match-part (named "concept" (hash-ref match-part 'part '()))))
+  (define found (and concept (hash-ref concept 'valueCoding #f)))
+  (if found
+      (values (hash-ref found 'system #f) (hash-ref found 'code #f) (hash-ref found 'display #f))
+      (values #f #f #f)))
 
 (define (uuid)
   (define bs (crypto-random-bytes 16))

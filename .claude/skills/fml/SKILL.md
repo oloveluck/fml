@@ -58,8 +58,10 @@ group tutorial(source src : TLeft, target tgt : TRight) {
   src.a as a -> tgt.a = a "rule_a";
 }
 ```
-`check` warns about a form the specification does not have (`where x` without parentheses, a
-`conceptmap` block, `share <id>`): such maps are read and run, and written back without it.
+`check` warns about a form the specification does not have (`where x` or `= a & b` without
+parentheses, a rule's name in single quotes, an expression given to a group, a `conceptmap` block,
+`share <id>`): such maps are read and run, and written back in the specified form. It also warns
+when a `uses` names another FHIR version than the one loaded (`…/Patient|4.0.1` under R5).
 
 ## From Racket
 A map starting with `#lang fml` is a module; requiring it registers its StructureMap by canonical:

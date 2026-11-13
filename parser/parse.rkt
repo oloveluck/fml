@@ -29,10 +29,14 @@
   (with-handlers ([exn:fail? (lambda (e)
                                (define d (exn->diagnostic e 'fml #:source source))
                                (err (fml-error 'parse (diagnostic->string d) d)))])
-    (define-values (d locs) (syntax->datum/locs (g:parse (tokenize (open-input-string src)))))
+    ;; one character to a line end: a token's position counts `\r\n` as one (the port counts
+    ;; lines), so the text a position names is read from the text with its line ends as `\n` — on
+    ;; a file with Windows line ends every note quoted the text some lines up
+    (define text (regexp-replace* #rx"\r\n" src "\n"))
+    (define-values (d locs) (syntax->datum/locs (g:parse (tokenize (open-input-string text)))))
     (parameterize ([current-locs locs] [current-source (and source (if (path? source) (path->string source) source))])
       (define m (lower-doc d))
-      (hash-set! notes m (beyond-specification d src))
+      (hash-set! notes m (beyond-specification d text))
       (ok m))))
 
 ;; ---- positions ------------------------------------------------------------------
@@ -42,7 +46,7 @@
 (define current-source (make-parameter #f))
 (define located-tags '(fgroup frule rule-source rule-target
                        where-clause check-clause target-list-mode conceptmap metadata
-                       transform gcall rule-name))
+                       transform gcall rule-name structure))
 ;; syntax->datum/locs : syntax -> (values datum (hasheq datum-node -> (list line col pos span)))
 (define (syntax->datum/locs stx)
   (define locs (make-hasheq))
@@ -120,10 +124,9 @@
       ;; a transform is a literal, a variable (a path of names), an invocation, or an expression in
       ;; parentheses (the specification's short hand for `evaluate`); a "double-quoted" one is a literal
       [(list 'transform (? pair? expression))
-       (define text (text-of x))
-       (if (or (plain-value? (lower expression)) (not text) (parenthesized? (string-trim text)))
-           '()
-           (list (note x "`= ~a`: the specification writes an expression in parentheses — `= (~a)`" (string-trim text) (string-trim text))))]
+       (cond [(or (in-parentheses? expression) (plain-value? (lower expression))) '()]
+             [else (define text (string-trim (or (text-of x) (fhirpath->string (lower expression)))))
+                   (list (note x "`= ~a`: the specification writes an expression in parentheses — `= (~a)`" text text))])]
       ;; an invocation's parameter is a variable or a literal: nothing else has a place in a StructureMap
       [(cons 'gcall _)
        (define arguments (let ([al (kid x 'arg-list)]) (if al (cdr al) '())))
@@ -224,9 +227,10 @@
 (define (assoc-ref al k) (cond [(assoc k al) => cdr] [else #f]))
 
 (define (lower-structure s)
-  (fml-use (cadr (kid s 'url))
-           (let ([a (kid s 'structure-alias)]) (and a (id-of (cadr a))))
-           (string->symbol (cadr (kid s 'model-mode)))))
+  (located! (fml-use (cadr (kid s 'url))
+                     (let ([a (kid s 'structure-alias)]) (and a (id-of (cadr a))))
+                     (string->symbol (cadr (kid s 'model-mode))))
+            s))
 
 (define (lower-group g) (located! (lower-group* g) g))
 (define (lower-group* g)
@@ -307,18 +311,30 @@
               variable share mode))
 
 ;; a transform is a lowered FHIRPath — recognise the special shapes on the AST:
-;; a bare string literal, a bare variable reference, or a named invocation (create/reference/…)
+;; a bare string literal, a bare variable reference, or a named invocation (create/reference/…).
+;; An expression in parentheses is FHIRPath and never an invocation: `= (now())`, `= (iif(a, b, c))`
+;; call FHIRPath's functions (they were read as transforms named `now` and `iif`, which there are not).
 (define (lower-transform tr)
   (match (cadr tr)
     [(? string? delim) (fml-literal delim)]              ; DELIM double-quoted literal
     [fp-datum
      (define ast (lower fp-datum))
+     (define invocation? (not (in-parentheses? fp-datum)))
      (match ast
        [(fp-lit* v) #:when (string? v) (fml-literal v)]
        [(fp-inv* #f name) (fml-var (symbol->string name))]
-       [(fp-callv #f 'copy (list (fp-inv* #f name))) (fml-var (symbol->string name))]   ; copy(v) = v
-       [(fp-callv #f name args) (fml-invoke (symbol->string name) (map invoke-arg args))]
+       [(fp-callv #f 'copy (list (fp-inv* #f name))) #:when invocation? (fml-var (symbol->string name))]   ; copy(v) = v
+       [(fp-callv #f name args) #:when invocation? (fml-invoke (symbol->string name) (map invoke-arg args))]
        [_ (fml-fhirpath ast)])]))
+
+;; in-parentheses? : fp-expr datum -> boolean   the whole expression is one `( … )`. The grammar
+;; drops the parentheses and keeps their nesting: down the cascade's one-part nodes, a `primary`
+;; whose part is an `fp-expr`.
+(define (in-parentheses? d)
+  (match d
+    [(list 'primary (cons 'fp-expr _)) #t]
+    [(list (? symbol?) (? pair? only)) (in-parentheses? only)]
+    [_ #f]))
 
 ;; pattern helpers over fhirpath's prefab structs (avoid a hard require cycle on struct names)
 (require (only-in fhirpath/parser/ast

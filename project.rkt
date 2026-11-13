@@ -15,7 +15,6 @@
          (only-in "parser/parse.rkt" parse-fml)
          (only-in "structuremap.rkt" fml->structuremap)
          (only-in "check.rkt" check-map check-map/examples)
-         (only-in "transform.rkt" uses-types)
          (only-in fhir/sd/logical resolve-structure-definition/data)
          (only-in fhir/diagnostic diagnostic diagnostic? loc)
          (only-in fhir/result/result ok? ok-value err-error)
