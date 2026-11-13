@@ -15,7 +15,7 @@
                              "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" as source\n"
                              "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" as target\n"
                              "group main(source src : QuestionnaireResponse, target tgt : Patient) {\n"
-                             "  src.item as item where linkId = 'birthDate' then { item.answer as a -> tgt.birthDate = (a.value); };\n"
+                             "  src.item as item where (linkId = 'birthDate') then { item.answer as a -> tgt.birthDate = (a.value); };\n"
                              "}\n") o))))
 (define transform (dynamic-require file 'transform))
 (define (qr date) (hasheq 'resourceType "QuestionnaireResponse" 'status "completed"

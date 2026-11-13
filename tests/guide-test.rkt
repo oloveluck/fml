@@ -20,7 +20,7 @@
 (define-runtime-path guide-file "../guide.md")
 (define text (file->string guide-file))
 (define (blocks lang) (map cadr (regexp-match* (pregexp (string-append "```" lang "\n(.*?)```")) text #:match-select values)))
-(define (map-named name) (for/first ([b (in-list (blocks "fml"))] #:when (regexp-match? (regexp-quote (format "= \"~a\"" name)) b)) b))
+(define (map-named name) (for/first ([b (in-list (blocks "fml"))] #:when (regexp-match? (regexp-quote (format "/// name = '~a'" name)) b)) b))
 (define (parse s) (let ([r (parse-fml s)]) (if (ok? r) (ok-value r) (error 'guide "~a" (fml-error-string (err-error r))))))
 (define (transform map-text source) (run-map (parse map-text) (ok-value (from-json source #:lenient? #t))))
 
@@ -41,8 +41,8 @@
                 (hash 'resourceType "Patient" 'gender "female" 'birthDate "1980-02-03")))
 
 (test-case "the gender filter on the code system takes FHIR's codes only"
-  (define rule (cadr (regexp-match #px"`(src[.]item as item where linkId = 'gender' then [{] item[.]answer as a where value[.]system =\n'http://hl7[.]org/fhir/administrative-gender' -> tgt[.]gender = [(]a[.]value[.]code[)]; [}];)`" (file->string guide-file))))
-  (define m (string-replace (map-named "QR2Patient") "src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value.code);"
+  (define rule (cadr (regexp-match #px"`(src[.]item as item where [(]linkId = 'gender'[)] then [{] item[.]answer as a where [(]value[.]system =\n'http://hl7[.]org/fhir/administrative-gender'[)] -> tgt[.]gender = [(]a[.]value[.]code[)]; [}];)`" (file->string guide-file))))
+  (define m (string-replace (map-named "QR2Patient") "src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value.code);"
                             (string-replace rule "\n" " ")))
   (define (qr system) (hasheq 'resourceType "QuestionnaireResponse" 'status "completed"
                               'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueCoding (hasheq 'system system 'code "female")))))))
@@ -82,3 +82,23 @@
 (test-case "a map applied to a source of another type is refused, as the text quotes"
   (check-exn (regexp (regexp-quote "the source is of type Observation, but group BpIntake takes src : QuestionnaireResponse"))
              (lambda () (transform (map-named "BpIntake") (hasheq 'resourceType "Observation" 'status "final" 'code (hasheq 'text "x"))))))
+
+(test-case "the other forms of a rule run: type, cardinality, default, list mode, check, log, a constant, the short form"
+  (define forms (map-named "Forms"))
+  (define (qr . more) (apply hasheq 'resourceType "QuestionnaireResponse" 'id "q1" 'status "completed"
+                             'item (list (hasheq 'linkId "weight" 'answer (list (hasheq 'valueDecimal 70)))) more))
+  (check-equal? (string->jsexpr (jsexpr->string (transform forms (qr))))
+                (string->jsexpr "{\"resourceType\": \"Observation\", \"id\": \"q1\", \"status\": \"final\", \"language\": \"en\",
+                                  \"code\": {\"coding\": [{\"system\": \"http://loinc.org\", \"code\": \"29463-7\"}]},
+                                  \"valueQuantity\": {\"value\": 70, \"unit\": \"kg\"}}"))
+  ;; a language stated is copied; the default is for when there is none
+  (check-equal? (hash-ref (transform forms (qr 'language "fr")) 'language) "fr")
+  ;; `1..1`: a source with no status is an error at the rule
+  (check-exn #rx"status has 0 values, and the rule takes 1..1"
+             (lambda () (transform forms (hash-remove (qr) 'status)))))
+
+(test-case "what is read beyond the specification is said, in the words the guide quotes"
+  (define quoted (cadr (regexp-match #px"a\nwarning at the form: `` (`where linkId = 'x'`: the specification writes the expression in\nparentheses — `where [(]linkId = 'x'[)]`) ``" text)))
+  (define bare (string-replace (map-named "QR2Patient") "where (linkId = 'gender')" "where linkId = 'x'"))
+  (check-equal? (for/list ([d (in-list (check-map (parse bare)))]) (list (diagnostic-severity d) (diagnostic-message d)))
+                (list (list 'warning (string-replace quoted "\n" " ")))))

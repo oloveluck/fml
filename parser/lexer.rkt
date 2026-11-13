@@ -41,7 +41,10 @@
   (lexer-srcloc
    [(eof) (void)]
    [(:or " " "\t" "\r" "\n" "\f") (token 'WS lexeme #:skip? #t)]
-   ;; /// metadata line (before //): the raw remainder is parsed by the lowering
+   ;; /// metadata line (before //): the raw remainder is parsed by the lowering. A markdown value
+   ;; starts and ends with """ and may cover several lines.
+   [(:: "///" (:* (:~ "\n" "\"")) "\"\"\"" (complement (:: any-string "\"\"\"" any-string)) "\"\"\"")
+    (token 'METADATA (substring lexeme 3))]
    [(:: "///" (:* (:~ "\n"))) (token 'METADATA (substring lexeme 3))]
    [(:: "//" (:* (:~ "\n"))) (token 'COMMENT lexeme #:skip? #t)]
    [(:: "/*" (:* (:or (:~ "*") (:: "*" (:~ "/")))) (:* "*") "*/") (token 'COMMENT lexeme #:skip? #t)]
@@ -52,6 +55,11 @@
    ;; FML delimited identifier / url / rule name (double-quoted)
    [(:: "\"" (:* (:or (:: "\\" any-char) (:~ "\"" "\\"))) "\"")
     (token 'DELIM (unescape (trim-ends lexeme)))]
+
+   ;; a delimited identifier (backticks): an element name that is no simple name (`not-found`,
+   ;; `group`), and the formal grammar's url
+   [(:: "`" (:* (:or (:: "\\" any-char) (:~ "`" "\\"))) "`")
+    (token 'BDELIM (unescape (trim-ends lexeme)))]
 
    ;; temporal literals (FHIRPath)
    [(:: "@" "T" timeformat) (token 'TIME (time-lit (substring lexeme 2)))]

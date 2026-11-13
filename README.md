@@ -16,6 +16,7 @@ fml qr2pat.map                                   # the StructureMap, as JSON
 fml qr2pat.map --transform qr.json               # run the map over an R5 resource
 fml map.map --transform source.json --structures sds/   # over logical models, given their definitions
 fml check map.map --examples ex/                 # check the map; transform and validate the examples
+fml --decompile StructureMap.json                # a StructureMap resource as the mapping language
 ```
 
 ```

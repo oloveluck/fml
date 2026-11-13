@@ -1,5 +1,5 @@
 #lang scribble/manual
-@(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/transform fml/operations
+@(require (for-label racket/base racket/contract fml/parser/parse fml/structuremap fml/print fml/transform fml/operations
                      fml/registry fml/check fml/project fml/workspace))
 
 @title{fml: the FHIR Mapping Language}
@@ -29,7 +29,9 @@ raco pkg install --link --auto fhir/fhir fhirpath vcl fhir/fhir-tx fml
 @bold{2. Write a map.} From a QuestionnaireResponse to an Observation:
 
 @verbatim|{#lang fml
-map "http://example.org/StructureMap/bp-intake" = "BpIntake"
+/// url = 'http://example.org/StructureMap/bp-intake'
+/// name = 'BpIntake'
+
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" alias QuestionnaireResponse as source
 uses "http://hl7.org/fhir/StructureDefinition/Observation" alias Observation as target
 
@@ -37,7 +39,7 @@ group BpIntake(source src : QuestionnaireResponse, target tgt : Observation) {
   src -> tgt.status = 'final' "status";
   src -> tgt.code = cc('http://loinc.org', '85354-9', 'Blood pressure panel') "code";
   src.subject as s -> tgt.subject = s "subject";
-  src.item as item where linkId = 'systolic' -> tgt.component as c,
+  src.item as item where (linkId = 'systolic') -> tgt.component as c,
       c.code = cc('http://loinc.org', '8480-6', 'Systolic blood pressure') then reading(item, c) "systolic";
 }
 
@@ -94,7 +96,8 @@ in @secref["intake"].
 (list (list @tt{raco fml map.fml} "the StructureMap JSON")
       (list @tt{raco fml map.fml --transform src.json [--structures sds/]} "run the map; print the target")
       (list @tt{raco fml check map.fml [--structures sds/] [--examples ex/] [--profile sd.json]} "the map against its structures; examples transformed and the results validated")
-      (list @tt{raco fml --parse-corpus dir/} @elem{parse every @tt{.map} under a directory})
+      (list @tt{raco fml --decompile sm.json} "a StructureMap resource as the mapping language (the specified language only)")
+      (list @tt{raco fml --parse-corpus dir/} @elem{parse every @tt{.map} under a directory, and write each back})
       (list @tt{raco fml --tck} "the vendored corpora, with floors"))]
 
 A StructureMap @tt{.json} is read wherever a @tt{.map} is. @litchar{--format text|json|outcome}
@@ -141,6 +144,8 @@ the packages. @tt{StructureMap/$transform} is the same as an operation, with the
 (check-map m)                                                   (code:comment "(listof diagnostic)")
 (run-map m (ok-value (from-json response #:lenient? #t)))      (code:comment "typed source -> target jsexpr")
 (structuremap->fml sm)                                          (code:comment "a StructureMap back to the AST")
+(fml->text m)                                                   (code:comment "fml/print: the AST as the specified language")
+(specification-notes m)                                         (code:comment "what the text wrote beyond it (warnings)")
 ]
 
 @section[#:tag "intake"]{A mapping problem, solved}
@@ -267,24 +272,46 @@ above. @racket[src] that is not a resource raises an argument error.
 @defproc[(parse-fml [src string?] [#:source source (or/c string? path? #f) #f]) (or/c ok? err?)]{
 @racket[(ok fml-map)], or @racket[(err fml-error)] carrying a diagnostic positioned in
 @racket[source]. The AST (@tt{fml/parser/ast}) is prefab: @racket[fml-map] (url, name, metadata,
-uses, imports, groups, conceptmaps), @racket[fml-group], @racket[fml-rule] (sources, targets,
+uses, imports, constants, groups, conceptmaps), @racket[fml-group], @racket[fml-rule] (sources, targets,
 dependents, nested rules), @racket[fml-source], @racket[fml-target] (context @racket[#f] for a bare
 invocation), @racket[fml-conceptmap] (name, prefixes, mappings); a transform is
 @racket[fml-literal], @racket[fml-fhirpath] (a FHIRPath AST), @racket[fml-invoke] or
 @racket[fml-var].}
 
+@defproc[(specification-notes [m fml-map?]) list?]{
+What the text @racket[m] was parsed from wrote that the specified language does not have, as
+warnings (diagnostics) at the form: @tt{where} or @tt{check} without parentheses, @tt{where} before
+the alias, @tt{share <id>}, a @tt{conceptmap} block, a @tt{///} line that states no element. Such
+maps are read and run; @racket[check-map] reports these with its own findings. Empty for a map not
+parsed from text.}
+
 @subsection[#:style 'unnumbered]{@tt{fml/structuremap}}
 @defmodule[fml/structuremap]
 
 @defproc[(fml->structuremap [m fml-map?]) hash?]{
-The StructureMap resource, the canonical compiled form of a mapping: status @racket["active"],
-unnamed rules named @tt{rule-N}, @tt{conceptmap} blocks as contained ConceptMaps.}
+The StructureMap resource, the canonical compiled form of a mapping: the metadata lines as its
+elements, status @racket["draft"] when none is stated (the specification's default), unnamed rules
+named @tt{rule-N}, @tt{conceptmap} blocks as contained ConceptMaps.}
 
 @defproc[(structuremap->fml [sm hash?]) fml-map?]{
 The inverse: a StructureMap resource read into the AST (embedded FHIRPath parsed, typed literal
 parameters, R4 @tt{equivalence} as well as R5 @tt{relationship} in contained ConceptMaps). The
-round trip returns the parsed AST up to the FML-only surface (@tt{///} metadata, conceptmap
-prefixes) and the @tt{rule-N} names; every corpus map is checked.}
+round trip returns the parsed AST up to the conceptmap prefixes and the @tt{rule-N} names; every
+corpus map is checked.}
+
+@subsection[#:style 'unnumbered]{@tt{fml/print}}
+@defmodule[fml/print]
+
+@defproc[(fml->text [m fml-map?]) string?]{
+The map as text, in the language the specification defines and nothing else: the header as
+@tt{/// url = '…'} and @tt{/// name = '…'} metadata lines, urls and rule names in double quotes,
+the expressions of @tt{where}, @tt{check}, @tt{log} and @tt{default} in parentheses, one rule to a
+line. With @racket[structuremap->fml] it reads any StructureMap resource as the language
+(@tt{raco fml --decompile}). A contained ConceptMap and a target's @tt{listRuleId} have no syntax
+in the specified language: a map holding one is written with the reference implementation's
+@tt{conceptmap} block (under a comment that says so) and @tt{share <id>}. Over every corpus map and
+every StructureMap resource of the matchbox corpus, the text parses, compiles to the same
+StructureMap, and prints the same again.}
 
 @subsection[#:style 'unnumbered]{@tt{fml/transform}}
 @defmodule[fml/transform]

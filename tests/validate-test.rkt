@@ -23,7 +23,7 @@ uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
 uses "http://hl7.org/fhir/StructureDefinition/Patient" as target
 
 group main(source src : QuestionnaireResponse, target tgt : Patient) {
-  src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value) "gender";
+  src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value) "gender";
 }
 FML
   )
@@ -52,7 +52,7 @@ FML
 ;; first item — "its source matched nothing in the input" blamed the input
 (define other-item (hash-set qr 'item (list (hasheq 'linkId "sex" 'answer (list (hasheq 'valueString "female"))))))
 (define msg2b (with-handlers ([exn:fail:user? exn-message]) (transform other-item #:validate (path->string (build-path dir "fsh"))) "no error"))
-(check-regexp-match #rx"Patient[.]gender: .*[(]the rule here wrote nothing: its source matched 1 item, but `where linkId = 'gender'` held for none [(]the linkId there: sex[)][)]" msg2b)
+(check-regexp-match #rx"Patient[.]gender: .*[(]the rule here wrote nothing: its source matched 1 item, but `where [(]linkId = 'gender'[)]` held for none [(]the linkId there: sex[)][)]" msg2b)
 ;; the `where` of an outer rule held for none: said at that rule's line (7), where the fix is, not at
 ;; the nested rule that would have written birthDate (8) — a rerun's agent edited the wrong line
 (with-output-to-file (build-path dir "nested.rkt")
@@ -60,7 +60,7 @@ FML
                                      "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" as source\n"
                                      "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" as target\n\n"
                                      "group main(source src : QuestionnaireResponse, target tgt : Patient) {\n"
-                                     "  src.item as item where linkId = 'birthDate' then {\n"
+                                     "  src.item as item where (linkId = 'birthDate') then {\n"
                                      "    item.answer as a -> tgt.birthDate = (a.value) \"birth\";\n"
                                      "  } \"birthItem\";\n}\n"))))
 (define nested (dynamic-require (build-path dir "nested.rkt") 'transform))
@@ -68,7 +68,7 @@ FML
                 (nested (hash-set qr 'item (list (hasheq 'linkId "birthdate" 'answer (list (hasheq 'valueDate "1950-05-01")))))
                         #:validate (path->string (build-path dir "fsh")))
                 "no error"))
-(check-regexp-match #rx"nested[.]rkt:7:[0-9]+: .*Patient[.]birthDate: .*`where linkId = 'birthDate'` held for none" msg-n)
+(check-regexp-match #rx"nested[.]rkt:7:[0-9]+: .*Patient[.]birthDate: .*`where [(]linkId = 'birthDate'[)]` held for none" msg-n)
 ;; … and the value the `where` most likely meant (an agent's `birth_date` item showed only the first
 ;; item, the name)
 (define near-item (hash-set qr 'item (list (hasheq 'linkId "name" 'answer (list (hasheq 'valueString "Ana")))
@@ -114,8 +114,8 @@ FML
 ;; matched nothing in the input", and the item was there
 (with-output-to-file (build-path dir "intake2.rkt")
   (lambda () (display (string-replace (string-replace map-text "StructureMap/intake" "StructureMap/intake2")
-                                      "src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value) \"gender\";"
-                                      "src.item as item where linkId = 'gender' then {\n    item.answer as a -> tgt.gender = (a.value.code) \"gender\";\n  } \"items\";"))))
+                                      "src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value) \"gender\";"
+                                      "src.item as item where (linkId = 'gender') then {\n    item.answer as a -> tgt.gender = (a.value.code) \"gender\";\n  } \"items\";"))))
 (define transform2 (dynamic-require (build-path dir "intake2.rkt") 'transform))
 (define as-string (hash-set qr 'item (list (hasheq 'linkId "gender" 'answer (list (hasheq 'valueString "female"))))))
 (define msg4 (with-handlers ([exn:fail:user? exn-message]) (transform2 as-string #:validate (path->string (build-path dir "fsh"))) "no error"))

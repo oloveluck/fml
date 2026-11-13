@@ -12,11 +12,8 @@ The FHIR Mapping Language as a lang: `fml/parser/grammar.rkt` is a `#lang brag` 
 g4 stubs FHIRPath ("insert reference to FhirPath grammar here"), the repo's FHIRPath cascade is
 INLINED with the same rule names — so `fhirpath/parser/ast.rkt`'s `lower` turns embedded expressions
 into REAL FHIRPath ASTs at parse time (`fml-fhirpath` carries the AST; nothing re-parses at
-runtime). Documented g4 deviations follow the reference implementation + the vendored suite: bare
-(unparenthesized) `where`/`check` expressions, `share <listRuleId>`, string rule-names,
-double-quoted strings inside expressions, and the fp `is`/`as` OPERATOR level omitted (`create('X')
-as var` must read as a target alias; the `.is()`/`.as()` function forms remain).
-`fml/fhirpath-print.rkt` prints ASTs back to canonical text (print∘parse fixpoint-tested) for the
+runtime). What is read beyond the specified language, and what the specification's two halves disagree on, is
+in "The specified language" at the end of this file. `fml/fhirpath-print.rkt` prints ASTs back to canonical text (print∘parse fixpoint-tested) for the
 StructureMap emission. Two consumers: `fml/structuremap.rkt` (AST → the StructureMap resource
 jsexpr — the canonical compiled form, printed by `#lang fml`'s `main`) and `fml/transform.rkt`
 (the executor): a rule matches its source element(s) (where-filtered FHIRPath over typed nodes),
@@ -199,7 +196,7 @@ of "its source matched nothing in the input". guide.md filters gender by its cod
 
 **Says when a `where` dropped it** (2026-11-11): `source-matches` records, for the targets of a rule (and
 its nested rules) whose source matched items its `where` held for none of, the condition and the first
-item; `validate-result` says `its source matched 1 item, but `where linkId = 'gender'` held for none
+item; `validate-result` says `its source matched 1 item, but `where (linkId = 'gender')` held for none
 (the first: …)` instead of blaming the input.
 
 **Names what the `where` tested** (2026-11-11): `source-matches` keeps every item the source matched;
@@ -215,3 +212,47 @@ at the nested rule that would have written the element. `tests/validate-test.rkt
 **Says why a date is unread** (2026-11-12): the lenient-read warning comes from `fhir/serialize/lenient`'s
 `drops-message` — a date its month lacks gets the calendar's reason (`is no date: February 1990 has 28
 days`), anything else the old wording. `tests/drops-test.rkt`.
+
+**The specified language; the printer** (2026-11-13). The rule: this language is the one the
+specification defines, read in full, and what is read beyond it is said.
+- **The specification is two documents that disagree**: its text (mapping-language.html) and its
+  formal grammar (`parser/mapping.g4`, vendored). The header is `/// url = '…'` and `/// name = '…'`
+  metadata lines in the text (SHALL) and `map url = name` in the g4; a url is "double-quoted" in the
+  text and `backticked` in the g4; a rule's name "double-quoted" in the text and a bare id in the
+  g4; the text writes strings in either quote, the g4 single-quoted only; the metadata lines and the
+  short form `src -> tgt: a, b;` are in the text alone. BOTH forms are read; `print.rkt` writes the
+  text's (it is what the specification's examples and every published map are written in, and the g4
+  stubs FHIRPath as `literal`). An earlier note here called quoted rule names a deviation: they are
+  the text's form.
+- **Forms the specification has that the engine lacked or dropped silently, now read, run and
+  carried by the StructureMap** (`tests/spec-test.rkt`, 48 checks): metadata lines (any element of
+  the resource, `name.property` paths, `"""` markdown, a complex element begun with no value —
+  `fml-map-metadata`; `structuremap.rkt` `metadata->elements`/`elements->metadata`), the status
+  default `draft` (it was `active`), a source's `: type`, `min..max` (fewer or more values is an error
+  at the rule) and `default (…)` (`fml-source` gained type/min/max/default), constants (`let name =
+  expr;`, lazy, in terms of one another, hidden by a variable — `constant-values`, StructureMap
+  `const`; `check.rkt` has them in scope), the short form, `then g(a), h(b) { rules }`, bare `share`
+  as a target list mode, backticked element names.
+- **`print.rkt`** (`fml->text : fml-map -> string`) writes a map — parsed, or read from a StructureMap
+  by `structuremap->fml` — in the specified language only: the metadata header, urls and rule names
+  in double quotes, `where`/`check`/`log`/`default` always in parentheses, strings as FHIRPath
+  literals, an element name that is a g4 keyword or no plain name in backticks, one declaration and
+  one rule to a line. Two things a StructureMap can hold have NO specified syntax (the g4:
+  "Syntax for embedded ConceptMaps excluded for now"; a target's `listRuleId`): a map that has one is
+  written with the reference implementation's `conceptmap "…" { … }` block under a comment saying
+  so, and `share <id>`. `raco fml --decompile <StructureMap.json>`; fhir-mcp's edit (`write … ref=`,
+  `describe … as=source`) hands a stored StructureMap with no kept text back with it.
+- **What is read beyond the specification is said** (`parser/parse.rkt` `specification-notes`,
+  appended by `check-map`: warnings at the form, so the editor, `raco fml check` and the workspace
+  show them): `where x`/`check x` without parentheses ("MUST be surrounded by a set of
+  parentheses"), `where` before the alias (the R3/R4 inter-version maps), `share <id>`, a
+  `conceptmap` block, a `///` line that states no element. `parenthesized?` reads the clause's own
+  text (positions kept for where-clause, check-clause, target-list-mode, conceptmap, metadata).
+  Our own maps, guide, manual, tests and messages are in the specified form (`where (linkId =
+  'gender')`, the metadata header); a message quotes a condition as `` `where (…)` ``.
+- **Laws, over the corpora** (`tests/matchbox-harness.rkt` `printed-outcome`; `raco fml --tck`,
+  `tests/print-test.rkt`): the printed text parses, means the map (the same StructureMap), printed
+  again is the same text, and `specification-notes` finds in it nothing but `share <id>` and
+  `conceptmap` — 58/58 corpus maps, 25/25 of matchbox's StructureMap RESOURCES (resource -> text ->
+  resource), and the 332 inter-version R4 maps in CI (`--parse-corpus` now writes each back too).
+- `support.rkt` reads the map's name and url from the metadata lines as well as from `map`.

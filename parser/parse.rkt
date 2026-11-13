@@ -15,11 +15,14 @@
          (only-in fhirpath/parser/ast lower)
          (only-in fhir/result/result ok err ok? err?)
          (only-in "../error.rkt" fml-error)
-         (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc))
+         (only-in fhir/diagnostic exn->diagnostic diagnostic->string attach-loc! loc diagnostic diagnostic?))
 
 (provide (contract-out
           ;; (ok fml-map) | (err fml-error) — a parse error carries its diagnostic (positions in `source`)
-          [parse-fml (->* (string?) (#:source (or/c string? path? #f)) (or/c ok? err?))]))
+          [parse-fml (->* (string?) (#:source (or/c string? path? #f)) (or/c ok? err?))]
+          ;; specification-notes : fml-map -> (listof diagnostic)   what the map's text wrote that the
+          ;; specified language does not have (warnings, each at its place); none for a map not parsed here
+          [specification-notes (-> fml-map? (listof diagnostic?))]))
 
 (define (parse-fml src #:source [source #f])
   (with-handlers ([exn:fail? (lambda (e)
@@ -27,14 +30,17 @@
                                (err (fml-error 'parse (diagnostic->string d) d)))])
     (define-values (d locs) (syntax->datum/locs (g:parse (tokenize (open-input-string src)))))
     (parameterize ([current-locs locs] [current-source (and source (if (path? source) (path->string source) source))])
-      (ok (lower-doc d)))))
+      (define m (lower-doc d))
+      (hash-set! notes m (beyond-specification d src))
+      (ok m))))
 
 ;; ---- positions ------------------------------------------------------------------
 ;; The brag tree keeps the tokens' positions; rules, sources and targets remember theirs
 ;; (fhir/diagnostic attach-loc!, as FSH rules and CQL definitions do), so a check can point at them.
 (define current-locs (make-parameter (hasheq)))
 (define current-source (make-parameter #f))
-(define located-tags '(fgroup frule rule-source rule-target))
+(define located-tags '(fgroup frule rule-source rule-target
+                       where-clause check-clause target-list-mode conceptmap metadata))
 ;; syntax->datum/locs : syntax -> (values datum (hasheq datum-node -> (list line col pos span)))
 (define (syntax->datum/locs stx)
   (define locs (make-hasheq))
@@ -53,6 +59,78 @@
   (when l (attach-loc! node (loc (current-source) (car l) (let ([c (cadr l)]) (and c (add1 c))) (caddr l) (cadddr l))))
   node)
 
+;; ---- beyond the specification ------------------------------------------------------
+;; Four forms are read that the specified language does not have (grammar.rkt's header says why
+;; each is read). A map that writes one is told so, at the form: print.rkt writes none of the first
+;; two, and the last two only for a StructureMap that holds what they say.
+(define notes (make-weak-hasheq))
+(define (specification-notes m) (hash-ref notes m '()))
+
+;; beyond-specification : datum source-text -> (listof diagnostic)
+(define (beyond-specification d src)
+  (define (note node fmt . args)
+    (define l (hash-ref (current-locs) node #f))
+    (diagnostic 'fml 'check 'warning (apply format fmt args)
+                (if l
+                    (loc (current-source) (car l) (let ([c (cadr l)]) (and c (add1 c))) (caddr l) (cadddr l))
+                    (loc (current-source) #f #f #f #f))))
+  ;; the text a located node was parsed from
+  (define (text-of node)
+    (match (hash-ref (current-locs) node #f)
+      [(list _ _ (? number? pos) (? number? span))
+       #:when (<= (+ (sub1 pos) span) (string-length src))
+       (substring src (sub1 pos) (+ (sub1 pos) span))]
+      [_ #f]))
+  (define (clause-notes node keyword)
+    (define text (text-of node))
+    (define expression (and text (string-trim (substring text (min (string-length text) (string-length keyword))))))
+    (if (and expression (not (parenthesized? expression)))
+        (list (note node "`~a ~a`: the specification writes the expression in parentheses — `~a (~a)`"
+                    keyword expression keyword expression))
+        '()))
+  (define (walk x)
+    (match x
+      [(cons 'rule-source parts)
+       (define tags (map (lambda (p) (and (pair? p) (car p))) parts))
+       (define alias-after-where (let ([w (memq 'where-clause tags)]) (and w (memq 'salias w))))
+       (append (if alias-after-where
+                   (list (note (kid x 'where-clause) "`where` before `as ~a`: the specification names the variable first — `as ~a where (…)`"
+                               (id-of (cadr (last (kids x 'salias)))) (id-of (cadr (last (kids x 'salias))))))
+                   '())
+               (append-map walk parts))]
+      [(cons 'where-clause _) (clause-notes x "where")]
+      [(cons 'check-clause _) (clause-notes x "check")]
+      [(list 'target-list-mode "share" (list 'share-id id))
+       (list (note x "`share ~a`: the specified language has no syntax for the rule that shares (StructureMap's listRuleId); it has `share` alone" id))]
+      [(cons 'conceptmap _)
+       (list (note x "an embedded `conceptmap` is not in the specified language (the R4 language's block, read as the reference implementation reads it); a ConceptMap resource and `translate(v, '<its url>', 'code')` say the same"))]
+      [(list 'metadata raw)
+       (if (equal? (car (lower-metadata x)) "")
+           (list (note x "`///~a` states no element: the specification's metadata is `/// <element> = <value>` (a comment is `//`)" raw))
+           '())]
+      [(cons (or 'fp-expr 'transform 'function-call) _) '()]            ; no FML form inside an expression
+      [(cons (? symbol?) parts) (append-map walk (filter pair? parts))]
+      [_ '()]))
+  (walk d))
+
+;; parenthesized? : string -> boolean   one pair of parentheses holds the whole text
+;; ("(a) or (b)" is not; a parenthesis inside a 'string' or "string" is text)
+(define (parenthesized? text)
+  (and (regexp-match? #rx"^[(]" text)
+       (let loop ([i 0] [depth 0] [in-string #f])
+         (cond
+           [(= i (string-length text)) #f]
+           [else
+            (define c (string-ref text i))
+            (cond
+              [in-string (cond [(char=? c #\\) (loop (+ i 2) depth in-string)]
+                           [(char=? c in-string) (loop (add1 i) depth #f)]
+                           [else (loop (add1 i) depth in-string)])]
+              [(memv c '(#\' #\")) (loop (add1 i) depth c)]
+              [(char=? c #\() (loop (add1 i) (add1 depth) #f)]
+              [(char=? c #\)) (if (= depth 1) (= i (sub1 (string-length text))) (loop (add1 i) (sub1 depth) #f))]
+              [else (loop (add1 i) depth #f)])]))))
+
 ;; ---- helpers over brag datum trees ------------------------------------------
 (define ((tagged? tag) x) (and (pair? x) (eq? (car x) tag)))
 (define (kids d tag) (filter (tagged? tag) (cdr d)))
@@ -67,20 +145,42 @@
 
 ;; ---- lowering ---------------------------------------------------------------
 (define (lower-doc d)
-  (define metadata (for/list ([m (in-list (kids d 'metadata))])
-                     (match (regexp-match #px"^\\s*(\\w+)\\s*=\\s*[\"']([^\"']*)[\"']" (cadr m))
-                       [(list _ k v) (cons k v)]
-                       [_ (cons "" (cadr m))])))
+  (define metadata (map lower-metadata (kids d 'metadata)))
   (define md (kid d 'map-decl))
+  (define (stated key) (let ([v (assoc-ref metadata key)]) (and (string? v) v)))
+  ;; the map's url and name: the `map` declaration (the formal grammar), else the metadata (the text)
   (define-values (url name)
     (if md
         (values (cadr (kid md 'url)) (let ([n (caddr md)]) (if (pair? n) (id-of n) n)))
-        (values (assoc-ref metadata "url") (assoc-ref metadata "name"))))
+        (values (stated "url") (stated "name"))))
   (fml-map url name metadata
            (map lower-structure (kids d 'structure))
            (for/list ([i (in-list (kids d 'imports))]) (cadr (kid i 'url)))
+           (for/list ([c (in-list (kids d 'const))]) (cons (id-of (cadr c)) (fp-of (caddr c))))
            (map lower-group (kids d 'fgroup))
            (map lower-conceptmap (kids d 'conceptmap))))
+
+;; lower-metadata : (metadata raw) -> Metadata   `name{.property}* = value`: the value a FHIRPath
+;; literal ('text', true, 12), markdown between """ … """ (several lines), or nothing — a complex
+;; element begun. ("double-quoted" text is read too.) A line that is none of these keeps its text
+;; under the path "" (reported by `specification-notes`).
+(define (lower-metadata m)
+  (define raw (cadr m))
+  (match (regexp-match #px"^\\s*([A-Za-z][A-Za-z0-9]*(?:[.][A-Za-z][A-Za-z0-9]*)*)\\s*=\\s*(.*)$" (regexp-replace #px"\\s+$" raw ""))
+    [(list _ path value)
+     (cons path
+           (match value
+             ["" 'empty]
+             [(pregexp #px"^(?s:\"\"\"(.*)\"\"\")$" (list _ text)) (string-trim text "\n" #:repeat? #f)]
+             [(pregexp #px"^'((?:[^'\\\\]|\\\\.)*)'$" (list _ text)) (unescape-literal text)]
+             [(pregexp #px"^\"((?:[^\"\\\\]|\\\\.)*)\"$" (list _ text)) (unescape-literal text)]
+             ["true" #t]
+             ["false" #f]
+             [(pregexp #px"^-?[0-9]+(?:[.][0-9]+)?$") (string->number value)]
+             [_ value]))]
+    [_ (cons "" raw)]))
+(define (unescape-literal s)
+  (regexp-replace* #px"\\\\(.)" s (lambda (_ c) (case c [("n") "\n"] [("t") "\t"] [("r") "\r"] [else c]))))
 
 ;; an embedded concept map: its prefixes resolve the systems of each mapping
 (define (lower-conceptmap c)
@@ -109,7 +209,20 @@
                           (let ([t (kid p 'param-type)]) (and t (id-of (cadr t))))))
              (let ([e (kid g 'extends-clause)]) (and e (id-of (cadr e))))
              (let ([tm (kid g 'type-mode)]) (if tm (map id-of (cdr tm)) '()))
-             (map lower-rule (kids g 'frule))))
+             (append* (for/list ([r (in-list (cdr g))] #:when (or ((tagged? 'frule) r) ((tagged? 'short-rule) r)))
+                        (if ((tagged? 'frule) r) (list (lower-rule r)) (lower-short-rule r))))))
+
+;; lower-short-rule : `src -> tgt: a, b;` -> the identity rules `src.a -> tgt.a; src.b -> tgt.b;`
+(define (lower-short-rule r)
+  (match (cdr r)
+    [(list (list 'rule-context source-ids ...) (list 'rule-context target-ids ...) elements ...)
+     (define (path context element) (string-join (append (cdr context) (list element)) "."))
+     (define source (map id-of source-ids))
+     (define target (map id-of target-ids))
+     (for/list ([e (in-list (map id-of elements))])
+       (fml-rule (list (fml-source (car source) (path source e) #f #f #f #f #f #f #f #f #f))
+                 (list (fml-target (car target) (path target e) #f #f #f #f))
+                 '() '() #f))]))
 
 (define (lower-rule r) (located! (lower-rule* r) r))
 (define (lower-rule* r)
@@ -117,23 +230,28 @@
     (let ([dep (kid r 'dependent)])
       (cond [(not dep) (values '() '())]
             [else (values (map lower-gcall (kids dep 'gcall))
-                          (map lower-rule (kids dep 'frule)))])))
+                          (let ([block (kid dep 'rule-block)]) (if block (map lower-rule (kids block 'frule)) '())))])))
   (fml-rule (map lower-source (kids (kid r 'rule-sources) 'rule-source))
             (let ([ts (kid r 'rule-targets)]) (if ts (map lower-target (kids ts 'rule-target)) '()))
             dependents nested
-            (let ([n (kid r 'rule-name)]) (and n (cadr n)))))
+            (let ([n (kid r 'rule-name)]) (and n (let ([v (cadr n)]) (if (symbol? v) (symbol->string v) v))))))
 
 (define (lower-source s)
   (define ctx-ids (map id-of (cdr (kid s 'rule-context))))
   (located! (lower-source* s ctx-ids) s))
 (define (lower-source* s ctx-ids)
+  (define cardinality (kid s 'source-cardinality))
   (fml-source (car ctx-ids)
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
+              (let ([t (kid s 'source-type)]) (and t (id-of (cadr t))))
+              (and cardinality (string->number (cadr cardinality)))
+              (and cardinality (cadr (caddr cardinality)))
+              (let ([d (kid s 'source-default)]) (and d (fp-of (cadr d))))
+              (let ([m (kid s 'source-list-mode)]) (and m (string->symbol (cadr m))))
               (let ([a (kid s 'salias)]) (and a (id-of (cadr a))))
               (let ([w (kid s 'where-clause)]) (and w (fp-of (cadr w))))
               (let ([c (kid s 'check-clause)]) (and c (fp-of (cadr c))))
-              (let ([l (kid s 'log-clause)]) (and l (fp-of (cadr l))))
-              (let ([m (kid s 'source-list-mode)]) (and m (string->symbol (cadr m))))))
+              (let ([l (kid s 'log-clause)]) (and l (fp-of (cadr l))))))
 
 (define (lower-target t) (located! (lower-target* t) t))
 (define (lower-target* t)
@@ -141,8 +259,10 @@
   (define ctx-ids (if rc (map id-of (cdr rc)) '(#f)))
   (define-values (variable share mode)
     (let ([a (kid t 'salias)] [lm (kid t 'target-list-mode)])
+      ;; `share` alone is the list mode; `share <id>` names the rule that shares (listRuleId)
       (values (and a (id-of (cadr a)))
-              (and lm (equal? (cadr lm) "share") (id-of (caddr lm)))
+              (and lm (equal? (cadr lm) "share")
+                   (match (cddr lm) [(list (list 'share-id id)) (symbol->string id)] [_ #t]))
               (and lm (member (cadr lm) '("first" "last" "single")) (string->symbol (cadr lm))))))
   (fml-target (car ctx-ids)                              ; #f: a bare invocation target
               (if (pair? (cdr ctx-ids)) (string-join (cdr ctx-ids) ".") #f)
@@ -191,7 +311,7 @@
                   '()))))
 
 (module+ test
-  (require (only-in fhir/diagnostic attached-loc loc-line loc-column loc-source))
+  (require (only-in fhir/diagnostic attached-loc loc-line loc-column loc-source diagnostic-loc diagnostic-severity diagnostic-message))
   (require rackunit (only-in fhir/result/result ok-value)
            (only-in fhirpath/parser/ast fp-binop fp-invoke fp-lit))
   (define m (ok-value (parse-fml #<<EOF
@@ -230,4 +350,31 @@ EOF
   (check-equal? (list (loc-line l2) (loc-column l2)) '(7 3))
   (check-equal? (loc-line (attached-loc (car (fml-rule-sources r2)))) 7)
   (check-true (> (loc-column (attached-loc (car (fml-rule-targets r2)))) 50))
-  (check-equal? (loc-line (attached-loc (car (fml-rule-nested r4)))) 10))
+  (check-equal? (loc-line (attached-loc (car (fml-rule-nested r4)))) 10)
+  ;; what the specified language does not have is said, at the form (the map above: one bare where)
+  (define (notes-of text) (for/list ([n (specification-notes (ok-value (parse-fml text)))])
+                            (list (loc-line (diagnostic-loc n)) (diagnostic-severity n) (diagnostic-message n))))
+  (check-match (specification-notes m)
+               (list (app diagnostic-message
+                          (regexp #rx"^`where linkId.value in [(]'patient.sex'[)]`: the specification writes the expression in parentheses — `where [(]linkId.value in [(]'patient.sex'[)][)]`$"))))
+  (check-equal? (loc-line (diagnostic-loc (car (specification-notes m)))) 7)
+  (check-match (notes-of (string-append "map \"http://x\" = \"m\"\n/// just words\n"
+                                        "conceptmap \"cm\" { prefix s = \"http://s\" prefix t = \"http://t\" s:a == t:b }\n"
+                                        "group g(source src, target tgt) {\n"
+                                        "  src.a where (x = ')') or (y = 2) as a check a.exists() -> tgt.a = a share shared;\n"
+                                        "}\n"))
+               (list (list 2 'warning (regexp #rx"states no element"))
+                     (list 3 'warning (regexp #rx"embedded `conceptmap` is not in the specified language"))
+                     (list 5 'warning (regexp #rx"`where` before `as a`"))
+                     (list 5 'warning (regexp #rx"^`where [(]x = '[)]'[)] or [(]y = 2[)]`"))
+                     (list 5 'warning (regexp #rx"^`check a.exists[(][)]`"))
+                     (list 5 'warning (regexp #rx"^`share shared`"))))
+  ;; the specified forms, in either of the specification's spellings, are not remarked on
+  (check-equal? (notes-of (string-append "/// url = 'http://x'\n/// name = 'm'\n/// title = \"\"\"\nA\nB\n\"\"\"\n"
+                                         "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" as source\n"
+                                         "let k = 'v';\n"
+                                         "group g(source src, target tgt) {\n"
+                                         "  src.a : string 0..1 default ('x') first as a where ((a = '(') or true) check (a.exists()) log (a) -> tgt.a = a share \"named\";\n"
+                                         "  src -> tgt: b, c;\n"
+                                         "}\n"))
+                '()))

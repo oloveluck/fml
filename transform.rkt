@@ -126,9 +126,15 @@
                                     (char-upper-case? (string-ref n (string-length elem))))))
             k)
           sym)))
+;; type-name-of : value -> type name | #f   a node's type, a primitive's code, and for a plain
+;; value (a default, a constant: a FHIRPath System value) the FHIR primitive it is
 (define (type-name-of v)
   (cond [(primitive-type? v) (regexp-replace #rx"^struct:fhir-" (symbol->string (vector-ref (struct->vector v) 0)) "")]
         [(fhir? v) (symbol->string (fhir-type v))]
+        [(boolean? v) "boolean"]
+        [(exact-integer? v) "integer"]
+        [(fp-decimal? v) "decimal"]
+        [(string? v) "string"]
         [else #f]))
 ;; child-slot! : parent elem [forced-type] -> a slot for one occurrence of parent.elem
 (define (child-slot! parent elem [forced-type #f])
@@ -190,9 +196,10 @@
 (define source-key " source")           ; the rule's current source element, for implicit copies
 
 ;; ---- the map's types ----------------------------------------------------------
-;; A Ctx is (ctx map types maps): the map, its `uses` resolved to type symbols (alias and type name,
-;; the imports' too), and the maps whose groups are callable (the map first, then its imports)
-(struct ctx (map types maps))
+;; A Ctx is (ctx map types maps constants): the map, its `uses` resolved to type symbols (alias and
+;; type name, the imports' too), the maps whose groups are callable (the map first, then its
+;; imports), and the values of their constants (`let name = expression;`) by name
+(struct ctx (map types maps constants))
 
 (define (uses-types m)
   (for/fold ([h (hash)]) ([u (in-list (fml-map-uses m))])
@@ -215,14 +222,51 @@
   (define maps (map-imports m))
   (define c (ctx m (for/fold ([h (hash)]) ([im (in-list (reverse maps))]) ; the map's own names win
                      (for/fold ([h h]) ([(k v) (in-hash (uses-types im))]) (hash-set h k v)))
-                 maps))
+                 maps
+                 (constant-values maps)))
   (define entry (car (fml-map-groups m)))
   (check-source-type! c entry src)
   (define target-sym (target-type-of c entry))
   (define root (make-root-slot (hash 'resourceType (symbol->string target-sym)) target-sym))
-  (define sc (scope (bind-params entry src root) (make-hash)))
+  (define sc (scope (for/fold ([vars (ctx-constants c)]) ([(k v) (in-hash (bind-params entry src root))]) (hash-set vars k v))
+                    (make-hash)))
   (run-group c entry sc)
   (finalize ((tslot-get root))))
+
+;; constant-values : (listof fml-map) -> (hash name -> value)   each constant's value: its FHIRPath
+;; expression evaluated with the other constants it names in scope (they "can refer to other
+;; constants"), each once; a circular definition is an error. They are bound first in every group's
+;; scope, so a parameter or a rule's variable of the same name hides one (the specification). A
+;; constant whose expression gives nothing has no value: naming it is an unbound variable.
+(define (constant-values maps)
+  (define expressions (for*/hash ([m (in-list (reverse maps))] [c (in-list (fml-map-constants m))]) (values (car c) (cdr c))))
+  (define values-so-far (make-hash))
+  (define (value-of name pending)
+    (when (member name pending)
+      (error 'fml "the constant ~a is defined in terms of itself (~a)" name (string-join (reverse (cons name pending)) " -> ")))
+    (hash-ref! values-so-far name
+               (lambda ()
+                 (define ast (fml-fhirpath-ast (hash-ref expressions name)))
+                 (define others (for*/hash ([n (in-list (remove-duplicates (free-names ast)))] #:when (hash-has-key? expressions n)
+                                            [v (in-value (value-of n (cons name pending)))] #:when v)
+                                  (values n v)))
+                 (match (fp-items ast #f (scope others (make-hash)))
+                   ['() #f]
+                   [(list one) one]
+                   [several several]))))
+  (for*/hash ([name (in-hash-keys expressions)] [v (in-value (value-of name '()))] #:when v) (values name v)))
+
+;; free-names : fhirpath-ast -> (listof string)   the names an expression starts its paths with
+(define (free-names ast)
+  (match ast
+    [(fp-invoke #f name) (list (symbol->string name))]
+    [(fp-invoke t _) (free-names t)]
+    [(fp-call t _ args) (append (if t (free-names t) '()) (append-map free-names args))]
+    [(fp-binop _ l r) (append (free-names l) (free-names r))]
+    [(fp-unop _ o) (free-names o)]
+    [(fp-index t i) (append (free-names t) (free-names i))]
+    [(fp-typeop _ o _) (free-names o)]
+    [_ '()]))
 
 ;; check-source-type! : ctx group source -> void   the source is of the entry group's source type
 ;; (or a type derived from it); an error positioned at the group when it is not. Nothing is checked
@@ -311,12 +355,26 @@
 (define (source-matches c r s sc)
   (define context (lookup sc (fml-source-context s)))
   (unless context (rule-error r "unbound source variable ~a" (fml-source-context s)))
-  (define base
+  (define present
     (cond [(not (fml-source-element s)) (list context)]
           [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
                              (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
           [else '()]))
-  ;; `where` sees the rule's alias bound to the candidate (`src.a as a where a.length() <= 20`)
+  ;; `min..max`: the element's cardinality in the source, or the transformation stops
+  (when (or (fml-source-min s) (fml-source-max s))
+    (define n (length present))
+    (define max (let ([m (fml-source-max s)]) (and m (not (equal? m "*")) (string->number m))))
+    (unless (and (>= n (or (fml-source-min s) 0)) (or (not max) (<= n max)))
+      (rule-error r "~a has ~a value~a, and the rule takes ~a..~a"
+                  (source-text s) n (if (= n 1) "" "s") (or (fml-source-min s) 0) (or (fml-source-max s) "*"))))
+  ;; `: type`: only the elements of that type
+  (define typed (if (fml-source-type s) (filter (lambda (e) (of-type? c e (fml-source-type s))) present) present))
+  ;; `default (value)`: the value when the source has none, once
+  (define base
+    (if (and (null? typed) (fml-source-default s))
+        (let ([items (fp-items (fml-fhirpath-ast (fml-source-default s)) #f sc)]) (if (pair? items) (list (car items)) '()))
+        typed))
+  ;; `where` sees the rule's alias bound to the candidate (`src.a as a where (a.length() <= 20)`)
   (define (with-candidate e) (if (fml-source-variable s) (bind sc (fml-source-variable s) e) sc))
   (define filtered
     (if (fml-source-where s)
@@ -342,6 +400,19 @@
                     filtered)]
     [else filtered]))
 
+;; source-text : source -> string   `src.value`, as a message names it
+(define (source-text s)
+  (string-append (fml-source-context s) (if (fml-source-element s) (string-append "." (fml-source-element s)) "")))
+
+;; of-type? : ctx value type-name -> boolean   the value is of the type named: a type the map
+;; `uses` (by its alias or name) or a FHIR type, itself or one derived from it; a primitive by its
+;; code. A value whose type cannot be told is kept (nothing is decided about it).
+(define (of-type? c v name)
+  (define declared (or (type-sym c name) (string->symbol name)))
+  (cond [(fhir? v) (and (memq declared (fhir-ancestors (fhir-type v))) #t)]
+        [(type-name-of v) => (lambda (actual) (equal? actual (symbol->string declared)))]
+        [else #t]))
+
 ;; ---- targets ----------------------------------------------------------------
 (define (run-target c r t sc implicit?)
   (cond
@@ -357,6 +428,13 @@
          [_ (transform-value c r tr sc #f)]))
      (if (fml-target-variable t) (bind sc (fml-target-variable t) v) sc)]))
 
+;; share-key : target -> key   what the rules that share one target element agree on: the rule id
+;; `share <id>` names, else (the list mode `share` alone) the element itself
+(define (share-key t)
+  (match (fml-target-share t)
+    [(? string? id) id]
+    [_ (cons (fml-target-context t) (fml-target-element t))]))
+
 (define (run-element-target c r t sc implicit?)
   (define context (lookup sc (fml-target-context t)))
   (unless (tslot? context) (rule-error r "target context ~a is not a target" (fml-target-context t)))
@@ -369,12 +447,12 @@
   (define slot
     (cond
       [(not (fml-target-element t)) context]
-      [(and (fml-target-share t) (hash-ref (scope-shares sc) (fml-target-share t) #f))]
+      [(and (fml-target-share t) (hash-ref (scope-shares sc) (share-key t) #f))]
       [else
        (define elems (string-split (fml-target-element t) "."))
        (define s (for/fold ([s context]) ([e (in-list elems)] [i (in-naturals)])
                    (child-slot! s e (and (= i (sub1 (length elems))) forced-type))))
-       (when (fml-target-share t) (hash-set! (scope-shares sc) (fml-target-share t) s))
+       (when (fml-target-share t) (hash-set! (scope-shares sc) (share-key t) s))
        s]))
   ;; a complex value with a `types` group for (its type, the element's type) runs that group
   (define typed-source (match tr [(fml-var name) (lookup sc name)] [#f (and implicit? (fml-target-element t) src-elem)] [_ #f]))
@@ -601,7 +679,8 @@
 ;;   - element-model `.value` steps read a primitive's value -> retried stripped when empty
 ;;     (the engine unwraps primitives implicitly, so `.value` is a no-op step there).
 (define (fp-items ast focus sc)
-  (define vars (for/hash ([(k v) (in-hash (scope-vars sc))] #:unless (or (tslot? v) (equal? k source-key))) (values k (list v))))
+  (define vars (for/hash ([(k v) (in-hash (scope-vars sc))] #:unless (or (tslot? v) (equal? k source-key)))
+                 (values k (if (list? v) v (list v)))))        ; (a constant may hold several values)
   (define (try a)
     (with-handlers ([exn:fail? (lambda (_) '())])
       (eval-fhirpath (rewrite-vars a vars) (if focus (list focus) '()) #:externals vars #:strict? #f)))
@@ -679,7 +758,7 @@
 (define (call-group c g args sc)
   (unless (= (length args) (length (fml-group-params g)))
     (error 'fml "group ~a takes ~a parameters, called with ~a" (fml-group-name g) (length (fml-group-params g)) (length args)))
-  (define sc* (for/fold ([s (scope (hash) (scope-shares sc))])
+  (define sc* (for/fold ([s (scope (ctx-constants c) (scope-shares sc))])
                         ([p (in-list (fml-group-params g))] [v (in-list args)])
                 (bind s (fml-param-name p) v)))
   (run-group c g sc*))
@@ -701,7 +780,7 @@ map "http://x" = "t"
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" alias QR as source
 uses "http://hl7.org/fhir/StructureDefinition/Patient" alias Patient as target
 group entry(source src : QR, target tgt : Patient) {
-  src.item as item where linkId = 'patient.sex' -> tgt.gender = (item.answer.valueString);
+  src.item as item where (linkId = 'patient.sex') -> tgt.gender = (item.answer.valueString);
 }
 EOF
 )))

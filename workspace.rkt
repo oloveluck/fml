@@ -126,7 +126,7 @@
                     "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" as source\n"
                     "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" as target\n"
                     "group main(source src : QuestionnaireResponse, target tgt : Patient) {\n"
-                    "  src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value.code);\n"
+                    "  src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value.code);\n"
                     "}\n"))
   (define-values (rs ds) (artifacts ws (list (cons "/tmp/qr.map" map-text) (cons "/tmp/bad.map" "map \"x\" = "))))
   (check-equal? (map (lambda (r) (hash-ref r 'url)) rs) '("http://example.org/StructureMap/qr2patient"))

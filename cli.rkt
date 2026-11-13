@@ -10,7 +10,8 @@
 ;;;   raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...
 ;;;                                               the map against its structures: findings positioned in
 ;;;                                               the FML; with examples, each result validated
-;;;   raco fml --parse-corpus <dir>               parse every .map under a directory, report the failures
+;;;   raco fml --decompile <StructureMap.json>    a StructureMap resource as the mapping language (print.rkt)
+;;;   raco fml --parse-corpus <dir>               parse every .map under a directory and write each back, report the failures
 ;;;   raco fml --tck                              run the vendored corpora (fhir-test-cases, matchbox, tutorial)
 ;;; Exit codes: 0 ok · 1 FML error / regression · 2 usage.
 
@@ -19,6 +20,7 @@
          (only-in fhir/serialize/fhir-json fhir-json->string)
          (only-in fml/parser/parse parse-fml)
          (only-in fml/structuremap fml->structuremap structuremap->fml)
+         (only-in fml/print fml->text)
          (only-in fml/transform run-map uses-types)
          (only-in fml/check check-map check-map/examples profiles-from)
          (only-in racket/list append-map)
@@ -31,7 +33,7 @@
          (only-in fhir/data-source current-data-source resources->data-source directory->data-source)
          (only-in fhir/result/result ok? ok-value err-error validation-error-message))
 
-(provide compile-file transform-file parse-corpus-dir check-file)
+(provide compile-file transform-file parse-corpus-dir check-file decompile-file)
 
 ;; parse-file : path-string -> fml-map   (or exit 1)
 ;; report : diagnostic text -> exit 1   (format from --format)
@@ -125,19 +127,30 @@
                                             ", "))))))
     (when (ormap (lambda (d) (eq? (diagnostic-severity d) 'error)) ds) (exit 1))))
 
-;; parse-corpus-dir : path-string -> void   parse every .map under dir; the failures, a count; exit 1 on any
+;; parse-corpus-dir : path-string -> void   every .map under dir parses, and is written back in the
+;; specified language (print.rkt's laws); the failures, the counts; exit 1 on any
 (define (parse-corpus-dir dir)
-  (define t ((dynamic-require 'fml/tests/matchbox-harness 'parse-corpus) dir))
-  (define failures ((dynamic-require 'fml/tests/matchbox-harness 'tally-failures) t))
-  (for ([f (in-list failures)]) (printf "  FAIL ~a: ~a\n" (car f) (cadr f)))
-  (printf "~a: ~a/~a maps parse\n" dir
-          ((dynamic-require 'fml/tests/matchbox-harness 'tally-passed) t)
-          ((dynamic-require 'fml/tests/matchbox-harness 'tally-total) t))
-  (unless (null? failures) (exit 1)))
+  (define (harness name) (dynamic-require 'fml/tests/matchbox-harness name))
+  (define (report t what)
+    (for ([f (in-list ((harness 'tally-failures) t))]) (printf "  FAIL ~a: ~a\n" (car f) (cadr f)))
+    (printf "~a: ~a/~a maps ~a\n" dir ((harness 'tally-passed) t) ((harness 'tally-total) t) what)
+    (null? ((harness 'tally-failures) t)))
+  (define parsed? (report ((harness 'parse-corpus) dir) "parse"))
+  (define printed? (report ((harness 'print-corpus) dir) "printed in the specified language and read back"))
+  (unless (and parsed? printed?) (exit 1)))
+
+;; decompile-file : path-string -> void   a StructureMap resource (JSON) as the mapping language
+(define (decompile-file file)
+  (define resource (call-with-input-file file read-json))
+  (unless (and (hash? resource) (equal? (hash-ref resource 'resourceType #f) "StructureMap"))
+    (eprintf "fml: ~a is not a StructureMap resource\n" file)
+    (exit 2))
+  (write-string (fml->text (structuremap->fml resource)))
+  (void))
 
 (define (usage [code 2])                             ; --help: stdout, exit 0
   ((if (zero? code) printf eprintf)
-   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>] [--indent]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
+   "usage: raco fml <file.map> [--transform <source.json> [--structures <file|dir>] [--indent]]\n       raco fml check <file.map> [--structures <file|dir>] [--examples <file|dir>] [--profile <sd.json|fsh-dir|canonical>]...\n       raco fml --decompile <StructureMap.json>\n       raco fml --parse-corpus <dir>\n       raco fml --tck\n")
   (exit code))
 
 (module+ main
@@ -157,6 +170,7 @@
     [(null? args) (usage)]
     [(equal? (car args) "--tck") (dynamic-require '(submod fml/tests/run main) #f)]
     [(and (equal? (car args) "--parse-corpus") (= (length args) 2)) (parse-corpus-dir (cadr args))]
+    [(and (equal? (car args) "--decompile") (= (length args) 2)) (decompile-file (cadr args))]
     [(and (equal? (car args) "check") (pair? (cdr args)) (not (regexp-match? #rx"^-" (cadr args))))
      (define opts (let loop ([as (cddr args)] [h (hash)])
                     (cond [(null? as) h]

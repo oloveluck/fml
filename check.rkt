@@ -11,7 +11,9 @@
 ;;;   - a group call with the wrong number of arguments, or naming a group neither this map nor its
 ;;;     imports has;
 ;;;   - a required element of the target type (min >= 1) the entry group never assigns (a warning:
-;;;     a dependent group may fill it).
+;;;     a dependent group may fill it);
+;;;   - what the text wrote that the specified language does not have (warnings, from the parse:
+;;;     parser/parse.rkt `specification-notes`).
 ;;; Types flow as in the engine: a parameter's declared type, the element types the registry
 ;;; knows, a variable bound by `as`. Anything unknown stops that branch — fail-open, never a
 ;;; finding on what the structures do not decide.
@@ -22,6 +24,7 @@
          racket/contract racket/list racket/string racket/match
          "parser/ast.rkt"
          (only-in "transform.rkt" uses-types map-imports run-map current-empty-targets)
+         (only-in "parser/parse.rkt" specification-notes)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          "schema.rkt"
          (only-in fhir/model/introspect full-field-specs)
@@ -67,7 +70,8 @@
   (define c (cx (uses-types m) (append-map fml-map-groups (map-imports m)) m
                 (lambda (node) (or (attached-loc node) fallback))))
   (append (append-map (lambda (g) (check-group c g)) (fml-map-groups m))
-          (check-required c)))
+          (check-required c)
+          (specification-notes m)))                    ; what the text wrote beyond the specified language
 
 (define (finding c node severity fmt . args)
   (diagnostic 'fml 'check severity (apply format fmt args) ((cx-at c) node)))
@@ -79,9 +83,12 @@
 ;; path-type/ty : Ty path -> (values missing ty)   only a known complex type decides anything
 (define (path-type/ty ty path) (if (symbol? ty) (path-type ty path) (values #f #f)))
 
+;; group-scope : cx group -> scope   the map's constants (`let`: values of a type the check does
+;; not decide), then the group's parameters, which hide them
 (define (group-scope c g)
-  (for/hash ([p (in-list (fml-group-params g))])
-    (values (fml-param-name p) (binding (fml-param-mode p) (type-of c (fml-param-type p))))))
+  (for/fold ([sc (for/hash ([k (in-list (fml-map-constants (cx-map c)))]) (values (car k) (binding 'source #f)))])
+            ([p (in-list (fml-group-params g))])
+    (hash-set sc (fml-param-name p) (binding (fml-param-mode p) (type-of c (fml-param-type p))))))
 (define (check-group c g) (check-rules c (fml-group-rules g) (group-scope c g)))
 (define (check-rules c rules sc) (append-map (lambda (r) (check-rule c r sc)) rules))
 
@@ -278,7 +285,7 @@
                  ;; the source matched, but a `where` held for none of it (the gender answer was there,
                  ;; as a valueString, and `where value.system = …` dropped it)
                  [(and (pair? empty) (eq? (car empty) 'filtered))
-                  (format " (the rule here wrote nothing: its source matched ~a item~a, but `where ~a` held for none~a)"
+                  (format " (the rule here wrote nothing: its source matched ~a item~a, but `where (~a)` held for none~a)"
                           (caddr empty) (if (= 1 (caddr empty)) "" "s")
                           (let ([w (cadr empty)]) (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
                           (where-evidence (cadr empty) (cadddr empty)))]
@@ -370,7 +377,7 @@
     "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" alias QR as source\n"
     "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" alias Patient as target\n"
     "group entry(source src : QR, target tgt : Patient) {\n"
-    "  src.item as item where linkId = 'sex' -> tgt.gender = (item.answer.valueString);\n"
+    "  src.item as item where (linkId = 'sex') -> tgt.gender = (item.answer.valueString);\n"
     "  src.subject as s -> tgt.managingOrganization = s;\n"
     "  src.authored as a -> tgt.birthDate = cast(a, 'date');\n"
     "  src.item as item -> tgt.name as n then naming(item, n);\n"
@@ -399,6 +406,8 @@
   (check-true (regexp-match? #rx"s is a Reference; it cannot be assigned to id" (diagnostic-message (list-ref ds 3))))
   (check-true (regexp-match? #rx"no group nosuch" (diagnostic-message (list-ref ds 4))))
   (check-true (regexp-match? #rx"takes 2 parameters, called with 1" (diagnostic-message (list-ref ds 5))))
+  ;; a constant is in scope in every group
+  (check-equal? (findings "/// url = 'http://x/m'\n/// name = 'm'\nuses \"http://hl7.org/fhir/StructureDefinition/Patient\" alias P as target\nlet male = 'male';\ngroup g(source src, target tgt : P) { src -> tgt.gender = male; }\n") '())
   ;; the required Observation.code is never assigned: a warning at the group
   (check-equal? (diagnostic-severity (last ds)) 'warning)
   (check-true (regexp-match? #rx"Observation.code is required" (diagnostic-message (last ds))))

@@ -16,13 +16,15 @@ what to do when something goes wrong. The specification is the reference for the
 
 ## Cheat sheet
 ```fml
-map "http://example.org/StructureMap/qr2patient" = "QR2Patient"
+/// url = 'http://example.org/StructureMap/qr2patient'
+/// name = 'QR2Patient'
+
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
 uses "http://hl7.org/fhir/StructureDefinition/Patient" as target
 
 group main(source src : QuestionnaireResponse, target tgt : Patient) {
-  src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value.code);
-  src.item as item where linkId = 'birth' then {
+  src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value.code);
+  src.item as item where (linkId = 'birth') then {
     item.answer as a -> tgt.birthDate = (a.value);
   };
 }
@@ -34,7 +36,10 @@ parentheses, or a transform: `create('Type')`, `copy`, `cast`, `evaluate`, `tran
 `reference`, and the constructors `c` (Coding), `cc` (CodeableConcept), `qty` (Quantity), `id`,
 `cp`, `append`. A choice element reads whichever variant is present (`ans.value`) and writes the
 variant of the value's type (`tgt.effective = d` writes `effectiveDateTime` for a dateTime). A string
-at the end of a rule names it. Over the QuestionnaireResponse below, the map gives
+at the end of a rule names it (in double quotes). The file begins with the map's metadata, one
+`/// element = value` line each: `url` and `name` are required, any other element of the
+StructureMap may follow (`/// title = 'Intake'`, `/// status = 'active'`; a status not stated is
+`draft`). Over the QuestionnaireResponse below, the map gives
 `{"resourceType": "Patient", "gender": "female", "birthDate": "1980-02-03"}`:
 ```json
 {"resourceType": "QuestionnaireResponse", "status": "completed",
@@ -43,17 +48,19 @@ at the end of a rule names it. Over the QuestionnaireResponse below, the map giv
 ```
 `(item.answer.value.code)` copies the code whatever its code system. To take only FHIR's own gender
 codes, filter on the system:
-`src.item as item where linkId = 'gender' then { item.answer as a where value.system =
-'http://hl7.org/fhir/administrative-gender' -> tgt.gender = (a.value.code); };` — a coding from another
+`src.item as item where (linkId = 'gender') then { item.answer as a where (value.system =
+'http://hl7.org/fhir/administrative-gender') -> tgt.gender = (a.value.code); };` — a coding from another
 system then writes nothing, and validation says so at that rule (`the rule here wrote nothing`).
 A form that answers gender as text (`{"valueString": "female"}`) takes the value itself:
-`src.item as item where linkId = 'gender' -> tgt.gender = (item.answer.value);` — the coded rule over a
+`src.item as item where (linkId = 'gender') -> tgt.gender = (item.answer.value);` — the coded rule over a
 text answer writes nothing, and the error says `(a.value.code)` was empty for `{"valueString":"female"}`.
 
 ## Worked example
 A blood-pressure reading from a form, as an Observation with a coded component:
 ```fml
-map "http://example.org/StructureMap/bp-intake" = "BpIntake"
+/// url = 'http://example.org/StructureMap/bp-intake'
+/// name = 'BpIntake'
+
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" alias QuestionnaireResponse as source
 uses "http://hl7.org/fhir/StructureDefinition/Observation" alias Observation as target
 
@@ -61,7 +68,7 @@ group BpIntake(source src : QuestionnaireResponse, target tgt : Observation) {
   src -> tgt.status = 'final' "status";
   src -> tgt.code = cc('http://loinc.org', '85354-9', 'Blood pressure panel') "code";
   src.subject as s -> tgt.subject = s "subject";
-  src.item as item where linkId = 'systolic' -> tgt.component as c,
+  src.item as item where (linkId = 'systolic') -> tgt.component as c,
       c.code = cc('http://loinc.org', '8480-6', 'Systolic blood pressure') then reading(item, c) "systolic";
 }
 
@@ -79,12 +86,14 @@ coded `8480-6` whose `valueQuantity` is 120 mm[Hg].
 A form's free-text name into `family` and `given`: FHIRPath in parentheses computes each part
 (`split`, `first`, `last`, `replaceMatches`, `substring`):
 ```fml
-map "http://example.org/StructureMap/name-split" = "NameSplit"
+/// url = 'http://example.org/StructureMap/name-split'
+/// name = 'NameSplit'
+
 uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
 uses "http://hl7.org/fhir/StructureDefinition/Patient" as target
 
 group main(source src : QuestionnaireResponse, target tgt : Patient) {
-  src.item as item where linkId = 'name' then {
+  src.item as item where (linkId = 'name') then {
     item.answer as a -> tgt.name as n then {
       a.value as full -> n.family = (full.split(' ').last()),
                          n.given = (full.split(' ').first()) "parts";
@@ -96,13 +105,50 @@ An answer `valueString: "Ann Marie Ng"` gives `"name": [{"family": "Ng", "given"
 assignment writes one value: a FHIRPath giving several (`split(' ').take(2)`) writes its first, so a
 middle name is a rule of its own (`n.given = (full.split(' ')[1])`).
 
+The rest of the language, as the specification writes it (each of these runs here):
+```fml
+/// url = 'http://example.org/StructureMap/forms'
+/// name = 'Forms'
+/// title = 'The other forms of a rule'
+
+uses "http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse" as source
+uses "http://hl7.org/fhir/StructureDefinition/Observation" as target
+
+let loinc = 'http://loinc.org';
+
+group main(source src : QuestionnaireResponse, target tgt : Observation) {
+  src.status : code 1..1 as s -> tgt.status = 'final' "status";
+  src.language default ('en') as l -> tgt.language = l "language";
+  src.item first as item where (linkId = 'weight') check (item.answer.exists()) log (item.linkId) ->
+    tgt.code = cc(loinc, '29463-7'), tgt.value = qty(item.answer.value, 'kg') "weight";
+  src -> tgt: id, implicitRules;
+}
+```
+A source may state its type (`: code`), how many values it must have (`1..1`: fewer or more is an
+error at the rule) and a `default (…)` for when it has none; `first`, `not_first`, `last`,
+`not_last` and `only_one` pick from a repeating source; `where (…)`, `check (…)` and `log (…)` take
+FHIRPath **in parentheses**. `let name = expression;` is a constant every group can read.
+`src -> tgt: id, implicitRules;` is the short form of `src.id -> tgt.id; src.implicitRules ->
+tgt.implicitRules;`.
+An element whose name is a keyword of the language or no plain name is written in backticks
+(`` src.`group` ``).
+
+**What is read beyond the specification.** Maps written for the R4 language and the reference
+implementation leave the parentheses off (`where linkId = 'x'`), embed a `conceptmap "…" { … }`
+block, or name the sharing rule (`share <id>`). They are read and run, and the check says so, a
+warning at the form: `` `where linkId = 'x'`: the specification writes the expression in
+parentheses — `where (linkId = 'x')` ``. `raco fml --decompile` and the workspace's `write … ref=`
+write a StructureMap as text in the specified language only (a concept map the resource contains,
+or a `listRuleId`, has no specified syntax and is written in the reference form under a comment).
+
 ## Checking a map
 The check holds a map against its two structures and reports, on the rule's line:
 - an element the type does not have (`` `subjct` is not an element of QuestionnaireResponse (did you mean `subject`?)``);
 - a value whose type cannot go into the element;
 - a group call with the wrong number of arguments, or to a group that does not exist;
 - a required target element no rule assigns (a warning: `Observation.code is required (min 1) but
-  no rule of main assigns it`).
+  no rule of main assigns it`);
+- a form the specified language does not have (a warning, above).
 
 Given example sources, each is transformed and the result validated against the target (and a
 profile), and each problem is traced to the rule that wrote the element. A rule that fails at run
@@ -116,6 +162,7 @@ raco fml map.map                                   # the StructureMap, as JSON
 raco fml map.map --transform source.json           # run it over one (R5) resource; the target JSON
 raco fml map.map --transform source.json --structures sds/   # over logical models: their StructureDefinitions
 raco fml check map.map --structures sds/ --examples ex/ --profile profile.json   # check; transform and validate
+raco fml --decompile StructureMap.json             # a StructureMap resource as the mapping language
 ```
 `--profile` is a StructureDefinition file, an FSH project (a directory or a `.fsh` file: its
 profiles, and its other definitions in context), or a canonical the packages define; a profile
@@ -126,7 +173,7 @@ on an error; `--format json` gives them as JSON.
 **As a module.** A file that starts with `#lang fml` is a Racket module providing `transform`
 (FHIR JSON in, FHIR JSON out; `#:structures` for logical models), `structuremap` and the AST.
 Requiring it registers its StructureMap, so the map is found by its canonical. The file is the map
-as written anywhere else, after one line: `#lang fml` then `map "http://…" = "intake"`, `uses …`,
+as written anywhere else, after one line: `#lang fml` then `/// url = '…'`, `/// name = '…'`, `uses …`,
 the groups; another module says `(require "intake.fml")` and calls `(transform qr)`.
 Without the `#lang fml` line, requiring the file fails with `default-load-handler: expected a
 `module' declaration, but found something else`: add the line. `raco fml` reads the file with or

@@ -34,7 +34,7 @@
         (list "group"      #px"^group\\s+(\\w+)")))
 
 (define keywords
-  '("map" "uses" "alias" "as" "source" "target" "queried" "produced" "imports" "conceptmap" "prefix"
+  '("map" "uses" "alias" "as" "source" "target" "queried" "produced" "imports" "let" "conceptmap" "prefix"
     "group" "extends" "types" "type+" "default" "where" "check" "log" "then" "share" "first" "last"
     "not_first" "not_last" "only_one" "create" "copy" "truncate" "escape" "cast" "append" "translate"
     "reference" "dateOp" "uuid" "pointer" "evaluate" "cc" "c" "qty" "id" "cp" "equivalent" "equal"
@@ -42,7 +42,14 @@
 
 (define (item-kind kind) (case kind [("group") 3] [("map" "uses" "imports") 9] [("conceptmap") 12] [else 1]))
 
-(define (entities text file) (declared-entities declarations text file))
+;; entities : text file -> (listof entity)   the declarations; the map by either header the
+;; specification has: `map "url" = "name"`, or the metadata lines `/// url = '…'`, `/// name = '…'`
+;; (the entity is at the name's line, its id the url stated on another)
+(define (entities text file)
+  (define url (cond [(regexp-match #px"(?m:^///\\s*url\\s*=\\s*['\"]([^'\"]*)['\"])" text) => cadr] [else #f]))
+  (declared-entities (cons (list "map" #px"^///\\s*name\\s*=\\s*['\"]([^'\"]*)['\"]" (lambda (gs) (cons (car gs) url)))
+                           declarations)
+                     text file))
 (define (project-files path) (files-beside path '("map" "fml")))
 
 ;; definition : project text position -> entity|#f   a group, a uses alias, or the map an imports url
@@ -68,7 +75,10 @@
   (define es (entities fml "/tmp/nowhere/m.map"))
   (check-equal? (map entity-name es) '("MyMap" "Patient" "http://x/StructureMap/other" "main" "helper"))
   (check-equal? (entity-id (car es)) "http://x/StructureMap/m")
-  (define other "map \"http://x/StructureMap/other\" = \"Other\"\ngroup o(source s, target t) {\n}\n")
+  ;; the header as metadata lines: the same entity, at the name's line
+  (define other "/// url = 'http://x/StructureMap/other'\n/// name = 'Other'\n/// status = 'draft'\n\ngroup o(source s, target t) {\n}\n")
+  (check-equal? (map (lambda (e) (list (entity-kind e) (entity-name e) (entity-id e) (entity-line e))) (entities other "/tmp/nowhere/other.map"))
+                '(("map" "Other" "http://x/StructureMap/other" 1) ("group" "o" #f 4)))
   (define pr (project "/tmp/nowhere/m.map" (append es (entities other "/tmp/nowhere/other.map"))
                       (lambda (f) (if (regexp-match? #rx"other" (path-string f)) other fml))))
   (check-equal? (entity-line (definition pr fml (cons 4 20))) 6)                                    ; helper

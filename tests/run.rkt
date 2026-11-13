@@ -7,6 +7,7 @@
          (only-in "harness.rkt" run-fml-suite)
          (only-in "matchbox-harness.rkt" parse-corpus run-tutorial run-smoke roundtrip-corpus check-corpus
                   run-tutorial/structuremap run-tutorial/own-structuremap compare-reference-structuremaps
+                  print-corpus print-structuremaps
                   tally-passed tally-total tally-failures))
 (define-runtime-path vendor "vendor/structure-mapping")
 (define-runtime-path matchbox "vendor/matchbox")
@@ -39,6 +40,12 @@
   (define ck2 (check-corpus matchbox))
   (report "check: maps without an error finding (fhir-test-cases)" ck1)
   (report "check: maps without an error finding (matchbox)" ck2)
+  (define pr1 (print-corpus vendor))
+  (define pr2 (print-corpus matchbox))
+  (report "printed in the specified language and read back (fhir-test-cases)" pr1)
+  (report "printed in the specified language and read back (matchbox)" pr2)
+  (define ps (print-structuremaps matchbox))
+  (report "the reference's StructureMap resources printed and read back" ps)
   ;; floors: every runnable JSON test and every .map stay green; the corpus floors ratchet up
   (define floors (list (list "structure-mapping exec" ep 6) (list "structure-mapping parse" pp pt)
                        (list "matchbox parse" (tally-passed mp) 43)
@@ -48,7 +55,9 @@
                        (list "tutorial from our StructureMaps" (tally-passed to) 37)
                        (list "tutorial from the reference's StructureMaps" (tally-passed ts) 30)
                        (list "StructureMap vs reference" (tally-passed cs) 21)
-                       (list "check" (+ (tally-passed ck1) (tally-passed ck2)) 55)))
+                       (list "check" (+ (tally-passed ck1) (tally-passed ck2)) 55)
+                       (list "printed and read back" (+ (tally-passed pr1) (tally-passed pr2)) 58)
+                       (list "StructureMaps printed and read back" (tally-passed ps) (tally-total ps))))
   (define regressed (filter (lambda (f) (< (cadr f) (caddr f))) floors))
   (unless (null? regressed)
     (for ([f regressed]) (eprintf "FML conformance regressed: ~a ~a < floor ~a\n" (car f) (cadr f) (caddr f)))

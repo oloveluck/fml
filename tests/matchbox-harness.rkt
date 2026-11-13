@@ -14,7 +14,9 @@
 (require racket/contract racket/file racket/list racket/string racket/path json
          (only-in fhir/r5/schemas)                       ; the tower the sources parse into
          (only-in fhir/data-source current-data-source resources->data-source)
-         (only-in "../parser/parse.rkt" parse-fml)
+         (only-in "../parser/parse.rkt" parse-fml specification-notes)
+         (only-in "../print.rkt" fml->text)
+         (only-in fhir/diagnostic diagnostic-message)
          (only-in "../parser/ast.rkt" fml-map fml-map? fml-map-url fml-map-conceptmaps fml-conceptmap fml-conceptmap-prefixes)
          (only-in "../structuremap.rkt" fml->structuremap structuremap->fml)
          (only-in "../transform.rkt" run-map uses-types resolve-structure-map)
@@ -66,6 +68,13 @@
           ;; check-corpus : dir -> tally   every map checked against its structures: a map passes when
           ;; the check reports no error (the tutorial's within its step's logical models)
           [check-corpus (-> path-string? tally?)]
+          ;; print-corpus : dir -> tally   every .map as print.rkt writes it: the text parses, means the
+          ;; map (the same StructureMap), is written the same again, and holds nothing the specified
+          ;; language lacks but a `conceptmap` block or a `share <id>` (what the map itself holds)
+          [print-corpus (-> path-string? tally?)]
+          ;; print-structuremaps : dir -> tally   the same for every StructureMap RESOURCE under dir
+          ;; (the reference's, R4-flavoured): resource -> text -> resource
+          [print-structuremaps (-> path-string? tally?)]
           ;; compare-reference-structuremaps : matchbox-dir -> tally   our StructureMap for each
           ;; tutorial map against the reference's, rule by rule (metadata and R4-only fields dropped,
           ;; FHIRPath text normalised through parse and print)
@@ -99,8 +108,40 @@
              (lambda (f)
                (define r (parse-fml (file->string f)))
                (cond [(not (ok? r)) 'skip]                                   ; parse failures are counted elsewhere
-                     [(equal? (structuremap->fml (fml->structuremap (ok-value r))) (ast-key (ok-value r))) 'pass]
+                     [(equal? (ast-key (structuremap->fml (fml->structuremap (ok-value r)))) (ast-key (ok-value r))) 'pass]
                      [else "read back differs from the parsed map"]))))
+
+;; ---- the map as text (print.rkt) ------------------------------------------------------
+;; printed-outcome : fml-map -> Outcome   the laws of print.rkt, for one map
+(define (printed-outcome m)
+  (define text (fml->text m))
+  (define r (parse-fml text))
+  (cond
+    [(not (ok? r)) (format "the printed text does not parse: ~a" (err-error r))]
+    [(not (equal? (fml->structuremap (ok-value r)) (fml->structuremap m))) "the printed text is another map"]
+    [(not (equal? (fml->text (ok-value r)) text)) "printed again, the text differs"]
+    [else
+     (define beyond
+       (for/list ([n (in-list (specification-notes (ok-value r)))]
+                  #:unless (regexp-match? #rx"^(`share |an embedded `conceptmap`)" (diagnostic-message n)))
+         (diagnostic-message n)))
+     (if (null? beyond) 'pass (format "the printed text is not the specified language: ~a" (car beyond)))]))
+
+(define (print-corpus dir)
+  (run-cases (map-files dir) (relative-to dir)
+             (lambda (f)
+               (define r (parse-fml (file->string f)))
+               (if (ok? r) (printed-outcome (ok-value r)) 'skip))))       ; parse failures are counted elsewhere
+
+(define (print-structuremaps dir)
+  (define resources
+    (for*/list ([f (in-list (sort (for/list ([f (in-directory dir)] #:when (regexp-match? #px"\\.json$" (path->string f))) f)
+                                  string<? #:key path->string))]
+                [j (in-value (with-handlers ([exn:fail? (lambda (_) #f)]) (read-json-file f)))]
+                #:when (and (hash? j) (equal? (hash-ref j 'resourceType #f) "StructureMap")))
+      (cons f j)))
+  (run-cases resources (lambda (r) ((relative-to dir) (car r)))
+             (lambda (r) (printed-outcome (structuremap->fml (cdr r))))))
 
 ;; the logical models beside a tutorial map (map/x.map -> ../logical/*.json), none elsewhere
 (define (logical-models-beside f)

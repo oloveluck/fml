@@ -87,7 +87,7 @@
     "uses \"http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse\" alias QR as source\n"
     "uses \"http://hl7.org/fhir/StructureDefinition/Patient\" alias Patient as target\n"
     "group entry(source src : QR, target tgt : Patient) {\n"
-    "  src.item as item where linkId = 'patient.sex' -> tgt.gender = (item.answer.valueString);\n"
+    "  src.item as item where (linkId = 'patient.sex') -> tgt.gender = (item.answer.valueString);\n"
     "}\n"))))
   (define pat2obs (ok-value (parse-fml (string-append
     "map \"http://x/pat2obs\" = \"pat2obs\"\n"

@@ -46,7 +46,20 @@ raco fml map/step1.map --transform source/source1.json --structures logical
 ```
 
 **The StructureMap form.** `raco fml map.map` prints the StructureMap; a StructureMap `.json` is
-read back wherever a `.map` is (`raco fml sm.json --transform src.json`, `raco fml check sm.json`).
+read back wherever a `.map` is (`raco fml sm.json --transform src.json`, `raco fml check sm.json`),
+and `raco fml --decompile sm.json` writes it as the mapping language — the specified language only
+(metadata lines, `where (…)` in parentheses, rule names in double quotes):
+```
+raco fml --decompile tests/vendor/matchbox/tutorial/step1/map/step1.json
+/// url = 'http://hl7.org/fhir/StructureMap/tutorial-step1'
+/// name = 'tutorial-step1'
+…
+group tutorial(source src : TLeft, target tgt : TRight) {
+  src.a as a -> tgt.a = a "rule_a";
+}
+```
+`check` warns about a form the specification does not have (`where x` without parentheses, a
+`conceptmap` block, `share <id>`): such maps are read and run, and written back without it.
 
 ## From Racket
 A map starting with `#lang fml` is a module; requiring it registers its StructureMap by canonical:
