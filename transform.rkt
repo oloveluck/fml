@@ -38,6 +38,7 @@
          (only-in fhir/sd/sd-index resolve-canonical-raw)
          (only-in fhir/registry registered-resource)
          (only-in fhir/diagnostic diagnostic loc raise-diagnostic attached-loc)
+         (only-in fhir/canonical canonical-url)
          (only-in fhir/data-source current-data-source data-source-all)
          (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
@@ -55,9 +56,15 @@
           [run-map (-> fml-map? fhir? hash?)]
           ;; where a rule's `log(…)` goes: a procedure of the message (nowhere by default)
           [current-fml-log (parameter/c (-> string? any))]
-          ;; when a mutable hasheq: each target whose value expression came out empty, with the
-          ;; source value the rule read (validate-result says why an element was not written)
+          ;; when a mutable hasheq: target -> EmptyReason, for each target that wrote nothing
+          ;; (validate-result says why an element was not written)
           [current-empty-targets (parameter/c (or/c #f (and/c hash? (not/c immutable?))))]
+          [struct empty-value ([source any/c])]
+          [struct empty-where ([where fml-fhirpath?] [count exact-nonnegative-integer?] [items list?] [rule fml-rule?])]
+          ;; group-param : group mode -> fml-param | #f   the group's first parameter of that mode
+          [group-param (-> fml-group? (or/c 'source 'target) (or/c fml-param? #f))]
+          ;; url-leaf : canonical -> string   its last path step, the |version dropped (the type's name)
+          [url-leaf (-> string? string?)]
           ;; uses-types : map -> (hash alias-or-type-name -> type symbol)   the `uses` resolved,
           ;; logical models registered along the way
           [uses-types (-> fml-map? hash?)]
@@ -84,7 +91,7 @@
 (define (registered-structure-maps) (sort (hash-keys registered) string<?))
 (define converted (make-weak-hasheq))           ; a StructureMap jsexpr -> its AST, once
 (define (resolve-structure-map url)
-  (define key (car (regexp-split #rx"[|]" url)))
+  (define key (canonical-url url))
   (define (as-ast sm) (hash-ref! converted sm (lambda () (structuremap->fml sm))))
   (or (hash-ref registered key #f)
       (let ([sm (findf (lambda (r) (equal? (hash-ref r 'url #f) key))
@@ -112,7 +119,21 @@
      u)))
 
 (define current-fml-log (make-parameter void))
+
+;; An EmptyReason says why a target wrote nothing; it is one of:
+;;   (empty-value source)                  the rule matched and its value expression gave nothing;
+;;                                         source: what the rule read, as JSON (#f: not a node)
+;;   (empty-where where count items rule)  the rule's source matched `count` items and its `where`
+;;                                         held for none; items: those read, as JSON; rule: the rule
+;;                                         whose `where` it is (the problem is said at its line)
+;; `current-empty-targets`, when set, is a mutable hasheq target -> EmptyReason filled by a run.
+(struct empty-value (source) #:transparent)
+(struct empty-where (where count items rule) #:transparent)
 (define current-empty-targets (make-parameter #f))
+;; note-empty! : target EmptyReason -> void   recorded when someone is listening
+(define (note-empty! t reason)
+  (define h (current-empty-targets))
+  (when h (hash-set! h t reason)))
 
 ;; ---- target slots -----------------------------------------------------------
 ;; A TSLOT is (tslot get set! type prim) — get/set! close over the parent so mutation propagates up
@@ -157,16 +178,15 @@
   (define prim (and (prim? (element-ty e)) (prim-code (element-ty e))))
   (cond
     [(element-list? e)
-     (define idx-box (box #f))
      (define h0 (as-hash ((tslot-get parent))))
      (define lst (as-list (hash-ref h0 key '())))
-     (set-box! idx-box (length lst))
+     (define index (length lst))                           ; this occurrence's place in the list
      ((tslot-set! parent) (hash-set h0 key (append lst (list (hash)))))
      (tslot
-      (lambda () (list-ref (as-list (hash-ref (as-hash ((tslot-get parent))) key '())) (unbox idx-box)))
+      (lambda () (list-ref (as-list (hash-ref (as-hash ((tslot-get parent))) key '())) index))
       (lambda (v)
         (define h (as-hash ((tslot-get parent))))
-        ((tslot-set! parent) (hash-set h key (list-set (as-list (hash-ref h key '())) (unbox idx-box) v))))
+        ((tslot-set! parent) (hash-set h key (list-set (as-list (hash-ref h key '())) index v))))
       child-type prim)]
     [else
      (tslot
@@ -215,14 +235,27 @@
 
 (define (uses-types m)
   (for/fold ([h (hash)]) ([u (in-list (fml-map-uses m))])
-    (define url (car (regexp-split #rx"[|]" (fml-use-url u))))
-    (define leaf (last (string-split url "/")))
+    (define url (canonical-url (fml-use-url u)))
+    (define leaf (url-leaf url))
     (define sym
       (cond [(type-registered? (string->symbol leaf)) (string->symbol leaf)]
             [else (let ([sd (resolve-structure-definition/data url)])
                     (and sd (register-structure-definition! sd)))]))
     (define h1 (if sym (hash-set h leaf sym) h))
     (if (and sym (fml-use-alias u)) (hash-set h1 (fml-use-alias u) sym) h1)))
+
+;; url-leaf : canonical -> string   the last step of its path (`…/StructureDefinition/Patient|4.0.1`
+;; -> "Patient"): the name a `uses` gives its type when it has no alias. Read once per `uses` per
+;; run, so by index rather than by a regexp split (that was a third of a small map's run).
+(define (url-leaf url)
+  (define u (canonical-url url))
+  (define end (let loop ([i (string-length u)]) (if (and (> i 0) (char=? (string-ref u (sub1 i)) #\/)) (loop (sub1 i)) i)))
+  (define start (let loop ([i end]) (if (and (> i 0) (not (char=? (string-ref u (sub1 i)) #\/))) (loop (sub1 i)) i)))
+  (substring u start end))
+
+;; group-param : group mode -> fml-param | #f   the group's first parameter of that mode
+(define (group-param g mode)
+  (findf (lambda (p) (eq? (fml-param-mode p) mode)) (fml-group-params g)))
 
 ;; type-sym : ctx type-name|#f -> symbol|#f   a parameter's declared type
 (define (type-sym c name)
@@ -255,7 +288,7 @@
   (define values-so-far (make-hash))
   (define (value-of name pending)
     (when (member name pending)
-      (error 'fml "the constant ~a is defined in terms of itself (~a)" name (string-join (reverse (cons name pending)) " -> ")))
+      (run-error (car maps) "the constant ~a is defined in terms of itself (~a)" name (string-join (reverse (cons name pending)) " -> ")))
     (hash-ref! values-so-far name
                (lambda ()
                  (define ast (fml-fhirpath-ast (hash-ref expressions name)))
@@ -272,36 +305,28 @@
 (define (free-names ast)
   (match ast
     [(fp-invoke #f name) (list (symbol->string name))]
-    [(fp-invoke t _) (free-names t)]
-    [(fp-call t _ args) (append (if t (free-names t) '()) (append-map free-names args))]
-    [(fp-binop _ l r) (append (free-names l) (free-names r))]
-    [(fp-unop _ o) (free-names o)]
-    [(fp-index t i) (append (free-names t) (free-names i))]
-    [(fp-typeop _ o _) (free-names o)]
-    [_ '()]))
+    [_ (append-map free-names (fp-parts ast))]))
 
 ;; check-source-type! : ctx group source -> void   the source is of the entry group's source type
 ;; (or a type derived from it); an error positioned at the group when it is not. Nothing is checked
 ;; when the parameter declares no type the map knows, or the source is not a typed node.
 (define (check-source-type! c g src)
-  (define sparam (findf (lambda (p) (eq? (fml-param-mode p) 'source)) (fml-group-params g)))
+  (define sparam (group-param g 'source))
   (define declared (and sparam (type-sym c (fml-param-type sparam))))
   (define actual (and (fhir? src) (fhir-type src)))
   (when (and declared actual (not (memq declared (fhir-ancestors actual))))
-    (raise-diagnostic
-     (diagnostic 'fml 'transform 'error
-                 (format "the source is of type ~a, but group ~a takes ~a : ~a"
-                         actual (fml-group-name g) (fml-param-name sparam) declared)
-                 (or (attached-loc g) (loc #f #f #f #f #f))))))
+    (run-error g "the source is of type ~a, but group ~a takes ~a : ~a"
+               actual (fml-group-name g) (fml-param-name sparam) declared)))
 
 ;; the entry group's target type: its target parameter's type, else the first `uses … as target`
 (define (target-type-of c g)
-  (define tparam (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params g)))
+  (define tparam (group-param g 'target))
   (define use (findf (lambda (u) (eq? (fml-use-mode u) 'target)) (fml-map-uses (ctx-map c))))
   (or (and tparam (type-sym c (fml-param-type tparam)))
-      (and use (type-sym c (or (fml-use-alias use) (last (string-split (fml-use-url use) "/")))))
+      (and use (type-sym c (or (fml-use-alias use) (url-leaf (fml-use-url use)))))
       (and tparam (fml-param-type tparam) (string->symbol (fml-param-type tparam)))
-      (error 'fml "cannot determine the target type: no target parameter type and no `uses … as target`")))
+      (run-error g "cannot determine the target type: group ~a's target parameter has no type and the map has no `uses … as target`"
+                 (fml-group-name g))))
 
 (define (bind-params g src root)
   (for/fold ([h (hash)]) ([p (in-list (fml-group-params g))])
@@ -338,17 +363,20 @@
                                            " ")))
          (loop (cdr ss) sc1))])))
 
-(define (rule-label r)
-  (or (fml-rule-name r)
-      (let ([s (car (fml-rule-sources r))])
-        (string-append (fml-source-context s) (if (fml-source-element s) (string-append "." (fml-source-element s)) "")))))
+;; rule-label : rule -> string   how a message names the rule: its name, else its first source
+(define (rule-label r) (or (fml-rule-name r) (source-text (car (fml-rule-sources r)))))
 
-;; rule-error : rule format args … -> raises exn:fail:diagnostic   a failure while running a rule is
-;; a diagnostic positioned at the rule (parse.rkt attached where it was written), so it renders as a
-;; parse error does and $transform returns it as an OperationOutcome with the line
+;; run-error : node format args … -> raises exn:fail:diagnostic   a failure while the map runs is a
+;; diagnostic positioned at the node it is about (a rule, a group; parse.rkt attached where each was
+;; written — the map itself has no place), so it renders as a parse error does and $transform
+;; returns it as an OperationOutcome with the line. Every failure of a run goes through here: a
+;; plain `error` was a stack trace at the command line.
+(define (run-error node fmt . args)
+  (raise-diagnostic (diagnostic 'fml 'transform 'error (apply format fmt args)
+                                (or (attached-loc node) (loc #f #f #f #f #f)))))
+;; rule-error : rule format args … -> raises exn:fail:diagnostic   a failure of one rule, named
 (define (rule-error r fmt . args)
-  (raise-diagnostic (diagnostic 'fml 'transform 'error (format "Rule ~s: ~a" (rule-label r) (apply format fmt args))
-                                (or (attached-loc r) (loc #f #f #f #f #f)))))
+  (run-error r "Rule ~s: ~a" (rule-label r) (apply format fmt args)))
 
 (define (run-rule-body c r sc)
   ;; a lone untransformed target carries the source value over (the specification's default)
@@ -395,12 +423,11 @@
   ;; the source matched, and its `where` held for none: said at the targets this rule (and its nested
   ;; rules) would have written (the message blamed the input: "its source matched nothing")
   (when (and (fml-source-where s) (pair? base) (null? filtered) (current-empty-targets))
-    (for ([t (in-list (rule-targets* r))])
-      (hash-set! (current-empty-targets) t
-                 ;; every item the source matched, so the message can say what the tested field held
-                 (list 'filtered (fml-source-where s) (length base)
-                       (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))
-                       r))))   ; the rule whose `where` it is: the problem is said at its line
+    ;; every item the source matched, so the message can say what the tested field held
+    (define reason (empty-where (fml-source-where s) (length base)
+                                (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))
+                                r))
+    (for ([t (in-list (rule-targets* r))]) (note-empty! t reason)))
   (case (fml-source-list-mode s)
     [(first) (if (pair? filtered) (list (car filtered)) '())]
     [(last) (if (pair? filtered) (list (last filtered)) '())]
@@ -473,9 +500,8 @@
     [group (call-group c group (list typed-source slot) sc)]
     [tr (define v (transform-value c r tr sc slot))
         (check-primitive-target! r t slot v tr)
-        (if (eq? v 'null)
-            (let ([h (current-empty-targets)])         ; the rule matched; its value gave nothing
-              (when h (hash-set! h t (and (fhir? src-elem) (value->jsexpr src-elem)))))
+        (if (eq? v 'null)                               ; the rule matched; its value gave nothing
+            (note-empty! t (empty-value (and (fhir? src-elem) (value->jsexpr src-elem))))
             ((tslot-set! slot) (coerce v (tslot-prim slot))))]
     [(and implicit? (fml-target-element t) src-elem)
      ((tslot-set! slot) (coerce (value->jsexpr src-elem) (tslot-prim slot)))]
@@ -522,7 +548,7 @@
   (hash-set! transforms name (transform (lambda (c r args sc slot) body ...) result-type)))
 (define (transform-ref r name)
   (or (hash-ref transforms name #f)
-      (rule-error r "the transform ~a is not supported (supported: ~a)" name (string-join (sort (hash-keys transforms) string<?) " "))))
+      (rule-error r "the transform ~a is not supported (supported: ~a)" name (string-join (transform-names) " "))))
 
 ;; transform-value : the jsexpr value a transform produces
 (define (transform-value c r tr sc slot)
@@ -589,13 +615,12 @@
     [_ (rule-error r "translate takes a variable, a concept map and a mode")]))
 (define-transform "uuid" "string" (c r args sc slot) (uuid))
 
-;; arg-value : a transform argument -> its jsexpr value (literal, variable, or FHIRPath)
+;; arg-value : an Arg (parser/ast) scope -> its jsexpr value: a literal, a variable's, an expression's
 (define (arg-value a sc)
   (match a
     [(fml-literal v) v]
     [(? string? name) (value->jsexpr (lookup sc name))]          ; a variable, by name
-    [(fml-fhirpath ast) (fp-scalar ast sc)]
-    [_ (error 'fml "unsupported transform argument ~a" a)]))
+    [(fml-fhirpath ast) (fp-scalar ast sc)]))
 
 ;; translate : the value through an embedded conceptmap ('#name') or a ConceptMap the terminology
 ;; service resolves; the mode picks what comes back: code, system, display, Coding, CodeableConcept
@@ -703,30 +728,42 @@
         (if (equal? stripped ast) r (try stripped)))
       r))
 
+;; A FHIRPath AST (fhirpath/parser/ast) is, for the three walks here, one of:
+;;   (fp-invoke target|#f name) | (fp-call target|#f name args) | (fp-binop op left right)
+;;   | (fp-unop op operand) | (fp-index target index) | (fp-typeop op operand type) | a leaf
+;; fp-parts : ast -> (listof ast)   its sub-expressions
+(define (fp-parts ast)
+  (match ast
+    [(fp-invoke t _) (if t (list t) '())]
+    [(fp-call t _ args) (if t (cons t args) args)]
+    [(fp-binop _ l r) (list l r)]
+    [(fp-unop _ o) (list o)]
+    [(fp-index t i) (list t i)]
+    [(fp-typeop _ o _) (list o)]
+    [_ '()]))
+;; fp-map : (ast -> ast) ast -> ast   the node with f applied to each sub-expression
+(define (fp-map f ast)
+  (match ast
+    [(fp-invoke t name) (fp-invoke (and t (f t)) name)]
+    [(fp-call t name args) (fp-call (and t (f t)) name (map f args))]
+    [(fp-binop op l r) (fp-binop op (f l) (f r))]
+    [(fp-unop op o) (fp-unop op (f o))]
+    [(fp-index t i) (fp-index (f t) (f i))]
+    [(fp-typeop op o ty) (fp-typeop op (f o) ty)]
+    [_ ast]))
+
 ;; rewrite-vars : chain-head (fp-invoke #f name) with name bound in scope -> (fp-extern name)
 (define (rewrite-vars ast vars)
   (match ast
     [(fp-invoke #f name)
      (if (hash-ref vars (symbol->string name) #f) (fp-extern (symbol->string name)) ast)]
-    [(fp-invoke t name) (fp-invoke (rewrite-vars t vars) name)]
-    [(fp-call t name args) (fp-call (and t (rewrite-vars t vars)) name (map (lambda (a) (rewrite-vars a vars)) args))]
-    [(fp-binop op l r) (fp-binop op (rewrite-vars l vars) (rewrite-vars r vars))]
-    [(fp-unop op o) (fp-unop op (rewrite-vars o vars))]
-    [(fp-index t i) (fp-index (rewrite-vars t vars) (rewrite-vars i vars))]
-    [(fp-typeop op o ty) (fp-typeop op (rewrite-vars o vars) ty)]
-    [_ ast]))
+    [_ (fp-map (lambda (a) (rewrite-vars a vars)) ast)]))
 
 ;; strip-value-steps : drop `.value` navigation steps ((fp-invoke t 'value) -> t)
 (define (strip-value-steps ast)
   (match ast
     [(fp-invoke t 'value) #:when t (strip-value-steps t)]
-    [(fp-invoke t name) (fp-invoke (and t (strip-value-steps t)) name)]
-    [(fp-call t name args) (fp-call (and t (strip-value-steps t)) name (map strip-value-steps args))]
-    [(fp-binop op l r) (fp-binop op (strip-value-steps l) (strip-value-steps r))]
-    [(fp-unop op o) (fp-unop op (strip-value-steps o))]
-    [(fp-index t i) (fp-index (strip-value-steps t) (strip-value-steps i))]
-    [(fp-typeop op o ty) (fp-typeop op (strip-value-steps o) ty)]
-    [_ ast]))
+    [_ (fp-map strip-value-steps ast)]))
 
 ;; a where/check condition over the focus, with the rule's variables in scope
 (define (fp-true? fpath focus sc)
@@ -770,14 +807,19 @@
                               (if (null? missing)
                                   ""
                                   (format "; not found: the imported ~a" (string-join missing ", ")))))))
+  (unless (= (length (fml-call-args call)) (length (fml-group-params g)))
+    (rule-error r "group ~a takes ~a parameters, called with ~a"
+                (fml-group-name g) (length (fml-group-params g)) (length (fml-call-args call))))
   (define args (for/list ([a (in-list (fml-call-args call))])
-                 (cond [(string? a) (or (lookup sc a) (rule-error r "group ~a: unbound argument ~a" (fml-call-name call) a))]
-                       [else (fp-scalar (fml-fhirpath-ast a) sc)])))
+                 (match a
+                   [(? string? name) (or (lookup sc name) (rule-error r "group ~a: unbound argument ~a" (fml-call-name call) name))]
+                   [(fml-literal v) v]
+                   [(fml-fhirpath ast) (fp-scalar ast sc)])))
   (call-group c g args sc))
 
+;; call-group : ctx group (listof value) scope -> void   the group's rules with its parameters bound
+;; to the values, in order (as many as it has parameters), the constants under them
 (define (call-group c g args sc)
-  (unless (= (length args) (length (fml-group-params g)))
-    (error 'fml "group ~a takes ~a parameters, called with ~a" (fml-group-name g) (length (fml-group-params g)) (length args)))
   (define sc* (for/fold ([s (scope (ctx-constants c) (scope-shares sc))])
                         ([p (in-list (fml-group-params g))] [v (in-list args)])
                 (bind s (fml-param-name p) v)))

@@ -24,7 +24,8 @@
          racket/contract racket/list racket/string racket/match
          (only-in fhir/serialize/lenient lenient-drops drop->string)
          "parser/ast.rkt"
-         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map current-empty-targets)
+         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map group-param
+                  current-empty-targets empty-where empty-where? empty-where-rule empty-value)
          (only-in "parser/parse.rkt" specification-notes)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
          "schema.rkt"
@@ -211,7 +212,7 @@
 ;; warning — unless a dependent call receives the whole target, which may write anything
 (define (check-required c)
   (define entry (and (pair? (fml-map-groups (cx-map c))) (car (fml-map-groups (cx-map c)))))
-  (define tparam (and entry (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry))))
+  (define tparam (and entry (group-param entry 'target)))
   (define tty (and tparam (type-of c (fml-param-type tparam))))
   (define specs (and (symbol? tty) (with-handlers ([exn:fail? (lambda (_) #f)]) (full-field-specs tty))))
   (define tname (and tparam (fml-param-name tparam)))
@@ -291,61 +292,70 @@
   (define issue-path (validator 'issue-path))
   (define issue-msg (validator 'issue-msg))
   (define entry (car (fml-map-groups m)))
-  (define tparam (findf (lambda (p) (eq? (fml-param-mode p) 'target)) (fml-group-params entry)))
+  (define tparam (group-param entry 'target))
   (define paths (target-paths entry (and tparam (fml-param-name tparam))))
   (define type (and (hash? out) (hash-ref out 'resourceType #f)))
   (define applicable (filter (lambda (sd) (member (hash-ref sd 'type type) (list type))) profiles))
+  (define empties (current-empty-targets))               ; target -> EmptyReason, when the run recorded them
   (for/list ([iss (in-list (validate-issues out #:profiles applicable))]
              #:when (member (issue-severity iss) '("error" "fatal" "warning")))
-    (define rule (trace-target paths (issue-path iss)))
-    (define at (and rule (attached-loc rule)))
-    ;; nothing there: no rule writes the element, or the one that does wrote nothing (its source
-    ;; matched nothing in this input — a missing item, a `where` that held for none)
-    (define unwritten
-      (let* ([segs (string-split (issue-path iss) ".")]
-             [elem (and (> (length segs) 1) (regexp-replace #px"\\[x\\]$" (cadr segs) ""))])
-        (cond [(not elem) ""]
-              [(not rule) (format " (no rule of ~a writes `~a`)" (fml-group-name entry) elem)]
-              [(and (hash? out) (not (for/or ([k (in-hash-keys out)]) (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k)))))
-               (define empty (and (current-empty-targets) (hash-ref (current-empty-targets) rule 'none)))
-               (cond
-                 ;; a rule that "matched nothing" because the read dropped its value (`05/01/1950`
-                 ;; is no date) is said so: the item was there, the map never saw it
-                 [(and (eq? empty 'none) (pair? drops))
-                  (format " (the rule here wrote nothing: its source matched nothing the map could read — ~a could not be read)"
-                          (string-join (map drop->string drops) ", "))]
-                 [(eq? empty 'none)
-                  (format " (the rule here wrote nothing: its source matched nothing in the input)")]
-                 ;; the source matched, but a `where` held for none of it (the gender answer was there,
-                 ;; as a valueString, and `where value.system = …` dropped it)
-                 [(and (pair? empty) (eq? (car empty) 'filtered))
-                  (format " (the rule here wrote nothing: its source matched ~a item~a, but `where (~a)` held for none~a)"
-                          (caddr empty) (if (= 1 (caddr empty)) "" "s")
-                          (let ([w (cadr empty)]) (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
-                          (where-evidence (cadr empty) (cadddr empty)))]
-                 [else
-                   ;; the source matched; the value expression gave nothing for what it read (a
-                   ;; `(a.value.code)` over an answer written as valueString)
-                   (format " (the rule here wrote nothing: its source matched, but ~a was empty~a)"
-                           (value-text rule)
-                           (if (hash? empty) (format " for ~a" (compact-source empty)) ""))])]
-              [else ""])))
-    ;; a `where` that held for none is said at the rule that has it (the fix is there), not at the
-    ;; nested rule that would have written the element
-    (define where-rule
-      (let ([e (and rule (current-empty-targets) (hash-ref (current-empty-targets) rule #f))])
-        (and (pair? e) (eq? (car e) 'filtered) (>= (length e) 5) (list-ref e 4))))
+    (define target (trace-target paths (issue-path iss)))
+    (define reason (and target empties (hash-ref empties target #f)))
     (diagnostic 'fml 'validate (if (equal? (issue-severity iss) "warning") 'warning 'error)
-                (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss) unwritten)
-                (or (and where-rule (attached-loc where-rule)) at (loc source #f #f #f #f)))))
+                (format "~a~a: ~a~a" label (issue-path iss) (issue-msg iss)
+                        (unwritten-note entry out (issue-path iss) target reason (and empties #t) drops))
+                ;; a `where` that held for none is said at the rule that has it (the fix is there),
+                ;; not at the nested rule that would have written the element
+                (or (and (empty-where? reason) (attached-loc (empty-where-rule reason)))
+                    (and target (attached-loc target))
+                    (loc source #f #f #f #f)))))
 
-;; value-text : target -> string   the target's value as the map writes it: `(a.value.code)`, `a`
+;; unwritten-note : group result issue-path target|#f EmptyReason|#f recorded? drops -> string
+;; why the element an issue is about is not in the result (in parentheses; "" when it is there, or
+;; the issue names no element): no rule writes it, or the rule that does wrote nothing
+(define (unwritten-note entry out path target reason recorded? drops)
+  (define elem (match (string-split path ".")
+                 [(list* _ step _) (regexp-replace #px"\\[x\\]$" step "")]
+                 [_ #f]))
+  (define (written? out)                               ; the element, or a variant of the choice it is
+    (for/or ([k (in-hash-keys out)])
+      (regexp-match? (pregexp (string-append "^" (regexp-quote elem) "(?:[A-Z]|$)")) (symbol->string k))))
+  (cond [(not elem) ""]
+        [(not target) (format " (no rule of ~a writes `~a`)" (fml-group-name entry) elem)]
+        [(or (not (hash? out)) (written? out)) ""]
+        [else (format " (the rule here wrote nothing~a)" (nothing-written target reason recorded? drops))]))
+
+;; nothing-written : target EmptyReason|#f recorded? drops -> string   what the run knows about a
+;; rule that wrote nothing, after "the rule here wrote nothing"
+(define (nothing-written target reason recorded? drops)
+  (match reason
+    ;; the source matched, but its `where` held for none of it (the gender answer was there, as a
+    ;; valueString, and `where (value.system = …)` dropped it)
+    [(empty-where where count items _)
+     (format ": its source matched ~a item~a, but `where (~a)` held for none~a"
+             count (if (= 1 count) "" "s") (expression-text where) (where-evidence where items))]
+    ;; the source matched; the value expression gave nothing for what it read (a `(a.value.code)`
+    ;; over an answer written as valueString)
+    [(empty-value read)
+     (format ": its source matched, but ~a was empty~a"
+             (value-text target) (if (hash? read) (format " for ~a" (compact-source read)) ""))]
+    [#f
+     (cond [(not recorded?) ""]                        ; nobody listened to the run: nothing is known
+           ;; a rule that "matched nothing" because the read dropped its value (`05/01/1950` is no
+           ;; date) is said so: the item was there, the map never saw it
+           [(pair? drops)
+            (format ": its source matched nothing the map could read — ~a could not be read"
+                    (string-join (map drop->string drops) ", "))]
+           [else ": its source matched nothing in the input"])]))
+
+;; expression-text : fml-fhirpath -> string   the expression as FHIRPath writes it
+(define (expression-text f) (fhirpath->string (fml-fhirpath-ast f)))
+
 ;; where-evidence : where items -> string   what the items held for the field a `where` tests against a
 ;; literal (`linkId = 'birthDate'`: "the linkIds there: name, gender, birth_date — did you mean
 ;; 'birth_date'?"); else the first item (the first item alone, the name item, told nothing)
 (define (where-evidence w items)
-  (define text (if (fml-fhirpath? w) (fhirpath->string (fml-fhirpath-ast w)) (fhirpath->string w)))
-  (define tests (regexp-match* #px"([A-Za-z_][A-Za-z0-9_.]*)\\s*=\\s*'([^']*)'" text #:match-select cdr))
+  (define tests (regexp-match* #px"([A-Za-z_][A-Za-z0-9_.]*)\\s*=\\s*'([^']*)'" (expression-text w) #:match-select cdr))
   (define (field-values field)
     (remove-duplicates
      (for*/list ([it (in-list items)] #:when (hash? it)
@@ -363,6 +373,7 @@
         [(and (pair? items) (hash? (car items))) (format " (the first: ~a)" (compact-source (car items)))]
         [else ""]))
 
+;; value-text : target -> string   the target's value as the map writes it: `(a.value.code)`, `a`
 (define (value-text t)
   (match (fml-target-transform t)
     [(fml-fhirpath ast) (format "`(~a)`" (fhirpath->string ast))]
@@ -374,20 +385,24 @@
   (if (> (string-length text) 100) (string-append (substring text 0 97) "...") text))
 
 ;; target-paths : entry-group target-var -> (listof (cons element-path target))   every target's path
-;; from the entry target, variables followed (`tgt.component as c` then `c.code` is component.code)
+;; from the entry target, variables followed (`tgt.component as c` then `c.code` is component.code);
+;; the last written first (`trace-target` takes the first of equals)
 (define (target-paths g tvar)
-  (define acc '())
+  ;; walk : rules env -> (listof (cons path target)), in the order written; env : variable -> path
   (define (walk rules env)
-    (for ([r (in-list rules)])
-      (define env2
-        (for/fold ([env env]) ([t (in-list (fml-rule-targets r))])
-          (define base (hash-ref env (fml-target-context t) #f))
-          (define path (and base (if (fml-target-element t) (if (equal? base "") (fml-target-element t) (string-append base "." (fml-target-element t))) base)))
-          (when path (set! acc (cons (cons path t) acc)))
-          (if (and path (fml-target-variable t)) (hash-set env (fml-target-variable t) path) env)))
-      (walk (fml-rule-nested r) env2)))
-  (walk (fml-group-rules g) (if tvar (hash tvar "") (hash)))
-  acc)
+    (append*
+     (for/list ([r (in-list rules)])
+       (define-values (env* found)
+         (for/fold ([env env] [found '()]) ([t (in-list (fml-rule-targets r))])
+           (define base (hash-ref env (fml-target-context t) #f))
+           (define path (cond [(not base) #f]
+                              [(not (fml-target-element t)) base]
+                              [(equal? base "") (fml-target-element t)]
+                              [else (string-append base "." (fml-target-element t))]))
+           (values (if (and path (fml-target-variable t)) (hash-set env (fml-target-variable t) path) env)
+                   (if path (cons (cons path t) found) found))))
+       (append (reverse found) (walk (fml-rule-nested r) env*)))))
+  (reverse (walk (fml-group-rules g) (if tvar (hash tvar "") (hash)))))
 
 ;; trace-target : paths validator-path -> target|#f   the target whose path shares the longest
 ;; leading run of steps with the issue's path (type root dropped, indexes and choice suffixes ignored)
