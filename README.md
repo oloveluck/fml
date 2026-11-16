@@ -1,8 +1,9 @@
 # fml — FHIR Mapping Language
 
-> Part of [fhir](https://github.com/oloveluck/fhir), a FHIR implementation designed to be used by
-> AI agents: one line per problem, at its place, with what would fix it; a guide written for an
-> agent to read; the same language inside the `fhir-mcp` workspace.
+> Part of [fhir](https://github.com/oloveluck/fhir), a toolkit for AI agents on FHIR: an
+> agent reads and writes FHIR's languages, and the JSON is what they compile to. A map in the
+> mapping language is half the tokens of its StructureMap; a mistake is one line, at the rule,
+> with what would fix it.
 
 Health data often arrives in one shape and is needed in another: a filled-in questionnaire that
 should become a Patient, a form of your own design that should become an Observation. The
