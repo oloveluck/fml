@@ -412,3 +412,39 @@ maps were written for) are the next thing to open. After adding an export to tra
 setup --no-docs --pkgs fml` before the corpus run: stale compiled dependents fail with
 `instantiate-linklet: mismatch`, which a catch-all handler in a harness turns into "error" for
 every pair — make such a handler catch `exn:fail?` of the engine only, or check one pair by hand.
+**Third and fourth passes: matchbox's own maps, read** (2026-11-23; fhir-examples' protocol
+entries of those names, each stated first). Both engines were run again as R4, the version
+matchbox wrote its maps for (the reference raises on 105 of the 667 pairs as R4, 137 as R5). The
+six sample maps held two causes, neither a wrong result of this engine: `qty(value, unit,
+system)`, a form the specification does not have and the reference refuses — read here, and now
+a warning of the check (`check.rkt` `unspecified-arguments`) — and `conformsTo()`, which the
+reference cannot evaluate as its engine runs a transform ("No validator configured"). Six maps
+did not stand for seventeen: 98 of the other eleven maps' 108 differences were under no class.
+Opened (the fourth pass), they were four causes. This engine's, each with a case in
+`tests/reference-test.rkt`:
+- **`translate(…, 'CodeableConcept')` into a choice element** wrote the bare name
+  (`item.location`, which is not an element) where the type picks the key
+  (`locationCodeableConcept`): `translate`'s result type is its third argument when that is
+  Coding or CodeableConcept — 32 pairs.
+- **A literal as a transform's first argument** (`copy(true)`, `cast(true, 'string')`,
+  `truncate('abc', 2)`) was looked up as a variable's name and gave nothing, silently: copy,
+  cast, truncate and translate read their argument with `arg-value` (a name, a literal or an
+  expression in parentheses).
+- **`cast` answers a value of the type asked for or fails**: `cast(true, 'integer')` handed the
+  boolean on. **`truncate` cuts a primitive's text** ("source must be stringy type"): a number
+  or a boolean was handed on whole. **`append` joins a boolean as FHIR writes it** (`"truex"`;
+  it was Racket's `"#tx"`). One reading of a primitive as text: `primitive-text`.
+- **`memberOf()` in a `where`** was "not implemented" in fhirpath, which `fp-items` reads as
+  nothing: it is a function there now, and `fp-items` gives an expression that asks a
+  terminology question (`asks-terminology?`, remembered per AST) the service over what is in
+  context (`make-terminology/resolver` of `current-terminology-resolver`).
+The reference's: `resolve()` of a reference to another entry of the same Bundle answers nothing
+there, so the variable it fills has no value and the rule raises (61 pairs: bundle-resolve.map);
+a text that is no boolean put into a boolean element is `false` there (Java's parseBoolean), an
+error here as for a number. After the fixes, as R4: the same result on 561 of the 667 pairs
+(523 before), every difference classed, none this engine's (`map-reference-r4-test.rkt` in
+fhir-examples holds that). The next unread set is HL7's own structure-mapping tests under the
+same changes: 183 of 199 the same, before and after; 14 of the 16 differences are the
+`conformsTo()` class, two are under no class. Floors unchanged: 6/6 + 15/15, 43/43, 17/17,
+37/37 (both ways), 29/37, 58/58, 21/31, 55/58, 58/58 + 25/25; tests 326 -> 341. Still named,
+not fixed: the `types` group for a primitive type (ten of the tutorial set's held-out pairs).

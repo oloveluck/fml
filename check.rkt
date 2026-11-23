@@ -174,7 +174,19 @@
 ;; specification's escape, dateOp and pointer: such a map checked clean and failed when run)
 (define (bind-target c t sc)
   (define-values (sc2 found) (target-clause c t sc))
-  (values sc2 (append found (unsupported-transform c t))))
+  (values sc2 (append found (unsupported-transform c t) (unspecified-arguments c t))))
+
+;; unspecified-arguments : cx target -> (listof diagnostic)   a constructor called with a number
+;; of arguments the specification's table does not give it. `qty` is "(text) or (value, unit,
+;; [system, code])": a system comes with its code. This engine runs three (the system written, no
+;; code); the reference implementation refuses the rule ("Transform qty requires 1, 2, or 4
+;; parameters"), so the map is not portable. A warning: matchbox's own quantity.map is written so.
+(define (unspecified-arguments c t)
+  (match (fml-target-transform t)
+    [(fml-invoke "qty" (list _ _ _))
+     (list (finding c t 'warning
+                    "qty with three arguments is not a form the specification has (it is `qty(text)` or `qty(value, unit, [system, code])`: a system comes with its code); this engine writes the system without a code, the reference implementation refuses the rule"))]
+    [_ '()]))
 
 ;; unknown-function-findings : cx rule -> (listof diagnostic)   a FHIRPath expression of the rule
 ;; that calls a function FHIRPath does not have: evaluated, it gives nothing, so a `where` never

@@ -764,6 +764,12 @@ so in a warning.}
 @item{@bold{A condition that finds several things does not hold.} A @tt{where} or @tt{check} holds
 when its FHIRPath gives @tt{true}, or one thing that is not a Boolean. It does not hold when it
 gives @tt{false}, nothing, or several things.}
+@item{@bold{@tt{qty} with three inputs is not portable.} The specification gives @tt{qty} one
+input (a text), two (a value and a unit) or four (with a system and its code). Three (a system
+without a code) are read here and the check warns; the reference implementation refuses the rule.}
+@item{@bold{What a value must be.} A text that is no number, or no boolean, put into an element
+of that type is an error at the rule, also when it comes from @tt{append}, @tt{truncate} or an
+expression. The reference implementation writes @tt{false} for a text that is no boolean.}
 @item{@bold{JSON only.} Data is read and written as JSON. Maps that produce XML documents, such as
 CDA, are not supported.}
 @item{@bold{An import that cannot be found is a warning.} When no registered map, data source or

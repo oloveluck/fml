@@ -149,6 +149,13 @@ warning at the form: `` `where linkId = 'x'`: the specification writes the expre
 parentheses — `where (linkId = 'x')` ``. `raco fml --decompile` and the workspace's `write … ref=`
 write a StructureMap as text in the specified language only (a concept map the resource contains,
 or a `listRuleId`, has no specified syntax and is written in the reference form under a comment).
+`qty(value, unit, system)` is read too: the specification's forms are `qty(text)` and
+`qty(value, unit, [system, code])` — a system comes with its code — and the reference
+implementation refuses three arguments, so the check warns at the rule.
+
+**Conditions that ask about codes.** A `where` may call FHIR's `memberOf('<value set url>')` on a
+code, a Coding or a CodeableConcept: it is answered from the value sets in context (the data
+source, registered modules, the packages), and holds for none when the value set is not there.
 
 ## Checking a map
 The check holds a map against its two structures and reports, on the rule's line:

@@ -42,7 +42,7 @@
          (only-in fhir/data-source current-data-source data-source-all)
          (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
-         (only-in fhir/terminology/service translate/json)
+         (only-in fhir/terminology/service translate/json make-terminology/resolver)
          (only-in fhirpath/parser/ast fp-invoke fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
          (only-in fhirpath/eval eval-fhirpath)
          (only-in fhirpath/functions function-known?)
@@ -633,8 +633,11 @@
     [(list (fml-literal ty)) (if (resource-type? (string->symbol ty)) (hash 'resourceType ty) (hash))]
     ['() (hash)]
     [_ (rule-error r "create takes a type name")]))
+;; A transform's first argument is a variable by name, or a literal, or an expression in
+;; parentheses (`copy(true)`, `cast('12', 'integer')`): `arg-value` reads all three. (They were
+;; looked up as variable names: a literal gave nothing, silently.)
 (define-transform "copy" #f (c r args sc slot)
-  (match args [(list v) (value->jsexpr (lookup sc v))] [_ (rule-error r "copy takes one variable")]))
+  (match args [(list v) (arg-value v sc)] [_ (rule-error r "copy takes one variable")]))
 ;; resource-identity : rule transform-name variable-name scope -> (values type id)
 ;; the type and id of the resource a variable holds, for a reference to it. A target resource being
 ;; built that has no id yet is given a random UUID (as the reference implementation does: the
@@ -671,10 +674,16 @@
 ;; type known" — the target element's own primitive type
 (define-transform "cast" (lambda (args) (literal-arg args 1)) (c r args sc slot)
   (define (convert v ty)
-    (define raw (value->jsexpr (lookup sc v)))
+    (define raw (arg-value v sc))
     (define out (coerce raw ty))
-    (when (and (string? out) (member ty '("integer" "integer64" "positiveInt" "unsignedInt" "decimal" "boolean")))
-      (rule-error r "Failed to cast ~v to type ~s" raw ty))
+    ;; what comes out is a value of the type asked for, or the cast failed (`cast(true, 'integer')`
+    ;; handed the boolean on)
+    (define fits?
+      (cond [(member ty '("integer" "integer64" "positiveInt" "unsignedInt")) (exact-integer? out)]
+            [(equal? ty "decimal") (and (real? out) (not (boolean? out)))]
+            [(equal? ty "boolean") (boolean? out)]
+            [else #t]))
+    (unless fits? (rule-error r "Failed to cast ~a to type ~s" (if (boolean? raw) (primitive-text raw) (format "~v" raw)) ty))
     out)
   (match args
     [(list v (fml-literal ty)) (convert v ty)]
@@ -689,17 +698,24 @@
 (define-transform "truncate" "string" (c r args sc slot)
   (define-values (s n)
     (match args
-      [(list v (fml-literal n)) (values (value->jsexpr (lookup sc v)) (string->number n))]
-      [(list v (fml-fhirpath ast)) (values (value->jsexpr (lookup sc v)) (fp-scalar ast sc))]
+      [(list v (fml-literal n)) (values (arg-value v sc) (string->number n))]
+      [(list v (fml-fhirpath ast)) (values (arg-value v sc) (fp-scalar ast sc))]
       [_ (rule-error r "truncate takes a variable and a length")]))
   ;; a text is cut; a value that is no text (a complex value, a list) has nothing to cut (it was
   ;; handed on as it stood)
   (when (or (hash? s) (list? s)) (rule-error r "truncate takes a text: ~a is a complex value" (car args)))
-  (if (and (string? s) (exact-integer? n)) (substring s 0 (min (string-length s) n)) s))
-(define-transform "translate" #f (c r args sc slot)
+  ;; "source must be stringy type": a number or a boolean is cut as the text FHIR writes it (it was
+  ;; handed on whole); what is left is read back by the element it goes into
+  (define text (primitive-text s))
+  (if (and (string? text) (exact-integer? n)) (substring text 0 (min (string-length text) n)) s))
+;; translate's third argument names what comes back; a Coding or a CodeableConcept is that type's
+;; value, which is what picks a choice target's key (`item.location = translate(…, 'CodeableConcept')`
+;; is `locationCodeableConcept`: it was written under the bare name `location`)
+(define-transform "translate" (lambda (args) (let ([mode (literal-arg args 2)]) (and (member mode '("Coding" "CodeableConcept")) mode)))
+  (c r args sc slot)
   (match args
-    [(list v (fml-literal map-url)) (translate c r (value->jsexpr (lookup sc v)) map-url "code")]
-    [(list v (fml-literal map-url) (fml-literal mode)) (translate c r (value->jsexpr (lookup sc v)) map-url mode)]
+    [(list v (fml-literal map-url)) (translate c r (arg-value v sc) map-url "code")]
+    [(list v (fml-literal map-url) (fml-literal mode)) (translate c r (arg-value v sc) map-url mode)]
     [_ (rule-error r "translate takes a variable, a concept map and a mode")]))
 (define-transform "uuid" "string" (c r args sc slot) (uuid))
 
@@ -875,7 +891,15 @@
   ;; texts and numbers are joined; a complex value has no text (it was joined as Racket prints a
   ;; table: `#hasheq((ab . test))x`)
   (for ([a (in-list vals)]) (when (or (hash? a) (list? a)) (rule-error r "append joins texts: one of its values is a complex value")))
-  (apply string-append (for/list ([a (in-list vals)]) (if (string? a) a (format "~a" a)))))
+  ;; a boolean is its FHIR text (`append(true, 'x')` joined Racket's: "#tx")
+  (apply string-append (for/list ([a (in-list vals)]) (or (primitive-text a) (format "~a" a)))))
+;; primitive-text : jsexpr -> string | #f   a primitive value as FHIR writes it; #f for nothing
+(define (primitive-text v)
+  (cond [(string? v) v]
+        [(boolean? v) (if v "true" "false")]
+        [(and (real? v) (exact? v) (not (integer? v))) (number->string (exact->inexact v))]
+        [(real? v) (number->string v)]
+        [else #f]))
 
 ;; ---- FHIRPath bridging -------------------------------------------------------
 ;; evaluate an FML FHIRPath AST (parsed once, at parse time) over a focus element, with the scope's
@@ -886,14 +910,30 @@
 (define (fp-items ast focus sc)
   (define vars (for/hash ([(k v) (in-hash (scope-vars sc))] #:unless (or (tslot? v) (equal? k source-key)))
                  (values k (if (list? v) v (list v)))))        ; (a constant may hold several values)
+  ;; an expression that asks a terminology question (FHIR's memberOf(), %terminologies) is given
+  ;; the service over what is in context: the data source, the registry, the packages
+  (define externals (if (asks-terminology? ast) (hash-set vars "terminologies" (list (make-terminology/resolver (current-terminology-resolver)))) vars))
   (define (try a)
     (with-handlers ([exn:fail? (lambda (_) '())])
-      (eval-fhirpath (rewrite-vars a vars) (if focus (list focus) '()) #:externals vars #:strict? #f)))
+      (eval-fhirpath (rewrite-vars a vars) (if focus (list focus) '()) #:externals externals #:strict? #f)))
   (define r (try ast))
   (if (null? r)
       (let ([stripped (strip-value-steps ast)])
         (if (equal? stripped ast) r (try stripped)))
       r))
+
+;; asks-terminology? : ast -> boolean   does the expression call memberOf() or name
+;; %terminologies? Remembered per AST (an expression is evaluated for every element it meets).
+(define asks-terminology?
+  (let ([seen (make-weak-hasheq)])
+    (lambda (ast)
+      (hash-ref! seen ast
+                 (lambda ()
+                   (let walk ([a ast])
+                     (match a
+                       [(fp-call _ 'memberOf _) #t]
+                       [(fp-extern "terminologies") #t]
+                       [_ (ormap walk (fp-parts a))])))))))
 
 ;; A FHIRPath AST (fhirpath/parser/ast) is, for the three walks here, one of:
 ;;   (fp-invoke target|#f name) | (fp-call target|#f name args) | (fp-binop op left right)
