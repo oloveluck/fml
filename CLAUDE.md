@@ -389,3 +389,26 @@ and then replaced is an error here at its rule, the last value there (its error 
 result is written). 52 of the 606 held-out pairs differ under no class and are unread: eight
 sample maps do not stand for seventeen that each teach another feature. Floors unchanged: 6/6 +
 15/15, 43/43, 17/17, 37/37 (both ways), 29/37, 58/58, 21/31, 55/58, 58/58 + 25/25.
+**Second pass** (the same day; the 55 unread held-out pairs opened, stated first in the protocol).
+Fixed, each with a case in `tests/reference-test.rkt`: **`append()` and `truncate()` take texts** —
+of a complex value append joined Racket's printed form of the table (`"#hasheq((ab . test))x"` in
+the result) and truncate handed the value on; both are a rule error. **A FHIRPath function that
+does not exist is said by the check** (`check.rkt` `unknown-function-findings`, `transform.rkt`
+`unknown-functions`, through fhirpath's `function-known?`): `fp-items` answers nothing for ANY
+FHIRPath error, so `where a.isInteger()` (the tutorial's step 4b) never held and nothing said why;
+it is a warning at the clause — a warning, because a corpus map runs that way and an error would
+take a floor down; HL7's engine refuses to read such a map. **Named, not fixed**: a `types` group
+written for a PRIMITIVE type (`group string(source src : string, target tgt : string) <<type+>>`
+with `src.value as v -> tgt.value = v`) is never run: the simple form copies the primitive itself.
+What it takes: `run-element-target` dispatching on a primitive source's type name and the slot's
+primitive code (`types-group` compares type symbols, which a primitive has none of), `source-values`
+answering the value itself for `.value` of a primitive, and a target `.value` on a primitive slot
+setting the slot. The reference's: `cast(x, 'integer')` keeps the text (a leading zero stays). Open:
+an explicit `tgt.aa = a` beside a `types` group for a's types runs the group here and copies whole
+there. Then a fresh set nobody read — matchbox's seventeen top-level maps over FHIR resources,
+667 pairs: the same result on 494 (74.1%), 168 of the 173 differences under no class. The mapping
+engine is NOT covered by this method yet; those pairs (and the reference run as R4, which these
+maps were written for) are the next thing to open. After adding an export to transform.rkt, `raco
+setup --no-docs --pkgs fml` before the corpus run: stale compiled dependents fail with
+`instantiate-linklet: mismatch`, which a catch-all handler in a harness turns into "error" for
+every pair — make such a handler catch `exn:fail?` of the engine only, or check one pair by hand.

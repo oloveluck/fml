@@ -24,7 +24,7 @@
          racket/contract racket/list racket/string racket/match
          (only-in fhir/serialize/lenient lenient-drops drop->string)
          "parser/ast.rkt"
-         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map group-param url-leaf
+         (only-in "transform.rkt" uses-types map-imports unresolved-imports transform-names run-map group-param url-leaf unknown-functions
                   current-empty-targets empty-where empty-where? empty-where-rule empty-value)
          (only-in "parser/parse.rkt" specification-notes)
          (only-in fhir/diagnostic diagnostic diagnostic? attached-loc loc)
@@ -143,7 +143,7 @@
 (define (check-rule c r sc)
   (define-values (sc1 ds1) (bind-all c bind-source (fml-rule-sources r) sc))
   (define-values (sc2 ds2) (bind-all c bind-target (fml-rule-targets r) sc1))
-  (append ds1 ds2
+  (append ds1 ds2 (unknown-function-findings c r)
           (append-map (lambda (d) (check-dependent c r d sc2)) (fml-rule-dependents r))
           (check-rules c (fml-rule-nested r) sc2)))
 (define (bind-all c bind xs sc)
@@ -175,6 +175,27 @@
 (define (bind-target c t sc)
   (define-values (sc2 found) (target-clause c t sc))
   (values sc2 (append found (unsupported-transform c t))))
+
+;; unknown-function-findings : cx rule -> (listof diagnostic)   a FHIRPath expression of the rule
+;; that calls a function FHIRPath does not have: evaluated, it gives nothing, so a `where` never
+;; holds and a value is never written — silently (the tutorial's own step4b calls `isInteger()`,
+;; and HL7's engine refuses to read that map). A warning at the clause that holds the expression.
+(define (unknown-function-findings c r)
+  (define (of node . exprs)
+    (for*/list ([e (in-list exprs)] #:when (fml-fhirpath? e)
+                [name (in-list (remove-duplicates (unknown-functions (fml-fhirpath-ast e))))])
+      (finding c node 'warning
+               "`~a()` is not a FHIRPath function this engine has: `~a` gives nothing wherever it is evaluated"
+               name (fhirpath->string (fml-fhirpath-ast e)))))
+  (append
+   (append-map (lambda (s) (of s (fml-source-where s) (fml-source-check s) (fml-source-log-expr s) (fml-source-default s)))
+               (fml-rule-sources r))
+   (append-map (lambda (t)
+                 (match (fml-target-transform t)
+                   [(? fml-fhirpath? e) (of t e)]
+                   [(fml-invoke _ args) (apply of t (filter fml-fhirpath? args))]
+                   [_ '()]))
+               (fml-rule-targets r))))
 
 ;; unsupported-transform : cx target -> (listof diagnostic)
 (define (unsupported-transform c t)

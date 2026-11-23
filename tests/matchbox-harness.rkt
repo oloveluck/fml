@@ -49,6 +49,8 @@
                          [failures list?])]
           ;; result files the reference's own tests do not use as expectations (with the evidence)
           [reference-overrides (listof (list/c string? (or/c 'skip 'error) string?))]
+          ;; the top-level maps, each with the corpus source its `uses … as source` fits
+          [smoke-pairs (listof (list/c string? string?))]
           ;; parse-corpus : dir -> tally   every .map under dir (recursively) parses
           [parse-corpus (-> path-string? tally?)]
           ;; run-tutorial : matchbox-dir -> tally   the tutorial steps' expected results

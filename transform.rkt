@@ -45,6 +45,7 @@
          (only-in fhir/terminology/service translate/json)
          (only-in fhirpath/parser/ast fp-invoke fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
          (only-in fhirpath/eval eval-fhirpath)
+         (only-in fhirpath/functions function-known?)
          (only-in fhirpath/print fhirpath->string)
          (only-in fhirpath/value item->system fp-long? fp-long-v)
          (only-in fhirpath/decimal fp-decimal? decimal->string)
@@ -54,6 +55,8 @@
 (provide (contract-out
           ;; run-map : parsed map × typed source resource -> the target resource jsexpr
           [run-map (-> fml-map? fhir? hash?)]
+          ;; the functions a FHIRPath tree calls that the FHIRPath engine does not have
+          [unknown-functions (-> any/c (listof string?))]
           ;; where a rule's `log(…)` goes: a procedure of the message (nowhere by default)
           [current-fml-log (parameter/c (-> string? any))]
           ;; when a mutable hasheq: target -> EmptyReason, for each target that wrote nothing
@@ -689,6 +692,9 @@
       [(list v (fml-literal n)) (values (value->jsexpr (lookup sc v)) (string->number n))]
       [(list v (fml-fhirpath ast)) (values (value->jsexpr (lookup sc v)) (fp-scalar ast sc))]
       [_ (rule-error r "truncate takes a variable and a length")]))
+  ;; a text is cut; a value that is no text (a complex value, a list) has nothing to cut (it was
+  ;; handed on as it stood)
+  (when (or (hash? s) (list? s)) (rule-error r "truncate takes a text: ~a is a complex value" (car args)))
   (if (and (string? s) (exact-integer? n)) (substring s 0 (min (string-length s) n)) s))
 (define-transform "translate" #f (c r args sc slot)
   (match args
@@ -866,6 +872,9 @@
     [(list s from to) (if (string? s) ((escaping-write (kind to)) ((escaping-read (kind from)) s)) s)]
     [_ (rule-error r "escape takes a variable and two kinds of escaping: escape(v, 'plain', 'json')")]))
 (define-constructor "append" "string" (r vals)
+  ;; texts and numbers are joined; a complex value has no text (it was joined as Racket prints a
+  ;; table: `#hasheq((ab . test))x`)
+  (for ([a (in-list vals)]) (when (or (hash? a) (list? a)) (rule-error r "append joins texts: one of its values is a complex value")))
   (apply string-append (for/list ([a (in-list vals)]) (if (string? a) a (format "~a" a)))))
 
 ;; ---- FHIRPath bridging -------------------------------------------------------
@@ -899,6 +908,14 @@
     [(fp-index t i) (list t i)]
     [(fp-typeop _ o _) (list o)]
     [_ '()]))
+;; unknown-functions : ast -> (listof string)   the functions an expression calls that FHIRPath
+;; does not have (`a.isInteger()`): evaluated, such an expression gives nothing wherever it stands
+(define (unknown-functions ast)
+  (append (match ast
+            [(fp-call _ name _) (if (function-known? name) '() (list (format "~a" name)))]
+            [_ '()])
+          (append-map unknown-functions (fp-parts ast))))
+
 ;; fp-map : (ast -> ast) ast -> ast   the node with f applied to each sub-expression
 (define (fp-map f ast)
   (match ast

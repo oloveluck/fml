@@ -10,7 +10,9 @@
          (only-in fhir/serialize/from-json from-json)
          (only-in fhir/result/result ok-value)
          (only-in "../parser/parse.rkt" parse-fml)
-         (only-in "../transform.rkt" run-map uses-types))
+         (only-in "../transform.rkt" run-map uses-types)
+         (only-in "../check.rkt" check-map)
+         (only-in fhir/diagnostic diagnostic-message diagnostic-severity))
 
 (define-runtime-path tutorial "vendor/matchbox/tutorial")
 
@@ -44,3 +46,17 @@
 (check-regexp-match #rx"check condition failed"
                     (run "step9" "step9check.map" "source9b.json"
                          (lambda (t) (string-replace t "src.i as i" "src.i not_first as i"))))
+
+;; a FHIRPath function that does not exist is said by the check, as a warning at its clause: run,
+;; the expression gives nothing, silently (HL7's engine refuses to read the tutorial's step4b for it)
+(let* ([m (ok-value (parse-fml (file->string (build-path tutorial "step4" "map" "step4b.map"))))]
+       [found (filter (lambda (d) (regexp-match? #rx"isInteger\\(\\)` is not a FHIRPath function" (diagnostic-message d))) (check-map m))])
+  (check-equal? (length found) 1)
+  (check-eq? (diagnostic-severity (car found)) 'warning))
+
+;; append and truncate take texts: of a complex value they are an error at the rule (append wrote
+;; "#hasheq((ab . test))x", truncate handed the value on)
+(check-regexp-match #rx"append joins texts"
+                    (run "step10" "step10.map" "source10.json" (lambda (t) (string-replace t "tgt.aa = a;" "tgt.aa = append(a, 'x');"))))
+(check-regexp-match #rx"truncate takes a text"
+                    (run "step10" "step10.map" "source10.json" (lambda (t) (string-replace t "tgt.aa = a;" "tgt.aa = truncate(a, 3);"))))
