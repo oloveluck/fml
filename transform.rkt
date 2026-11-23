@@ -233,6 +233,18 @@
     [(equal? prim "boolean") (cond [(equal? v "true") #t] [(equal? v "false") #f] [else v])]
     [else (cond [(number? v) (number->string v)] [(boolean? v) (if v "true" "false")] [else v])]))
 
+;; coerce/checked : rule target jsexpr prim-code|#f -> jsexpr   the same, and a text that is no
+;; number put into a number's element, or no boolean into a boolean's, is an error at the rule (the
+;; tutorial's step 4: "an error if a21 isn't an integer"). It was written into the element as it
+;; stood: `tgt.a21 = append(a, 'x')` gave an integer element the string "12345x".
+(define (coerce/checked r t v prim)
+  (define out (coerce v prim))
+  (when (and (string? out)
+             (member prim '("integer" "positiveInt" "unsignedInt" "integer64" "decimal" "boolean")))
+    (rule-error r "~s is no ~a: it cannot be the value of ~a.~a" out prim
+                (or (fml-target-context t) "") (or (fml-target-element t) "")))
+  out)
+
 ;; ---- scope ------------------------------------------------------------------
 ;; vars : name(string) -> source value | TSLOT ; shares : share-name -> TSLOT (per run)
 (struct scope (vars shares) #:transparent)
@@ -366,9 +378,6 @@
        (define s (car ss))
        (for ([elem (in-list (source-matches c r s sc))])
          (define sc1 (bind (if (fml-source-variable s) (bind sc (fml-source-variable s) elem) sc) source-key elem))
-         (when (fml-source-check s)
-           (unless (fp-true? (fml-source-check s) elem sc1)
-             (rule-error r "check condition failed: ~a" (fhirpath->string (fml-fhirpath-ast (fml-source-check s))))))
          (when (fml-source-log-expr s)
            ((current-fml-log) (string-join (for/list ([i (in-list (fp-items (fml-fhirpath-ast (fml-source-log-expr s)) elem sc1))])
                                              (format "~a" (item->jsexpr i)))
@@ -392,8 +401,11 @@
 
 (define (run-rule-body c r sc)
   ;; a lone untransformed target carries the source value over (the specification's default)
+  ;; … of the simple form `src.x -> tgt.x`: one source and one target, neither naming a variable,
+  ;; nothing after. A target that names one (`tgt.e as t_e`) creates its element and no more.
   (define implicit? (and (= 1 (length (fml-rule-sources r))) (= 1 (length (fml-rule-targets r)))
-                         (null? (fml-rule-dependents r)) (null? (fml-rule-nested r))))
+                         (null? (fml-rule-dependents r)) (null? (fml-rule-nested r))
+                         (not (fml-target-variable (car (fml-rule-targets r))))))
   (define sc2 (for/fold ([sc sc]) ([t (in-list (fml-rule-targets r))]) (run-target c r t sc implicit?)))
   (for ([call (in-list (fml-rule-dependents r))]) (run-call c call sc2 r))
   (for ([nr (in-list (fml-rule-nested r))]) (run-rule c nr sc2)))
@@ -429,6 +441,12 @@
                                 (for/list ([b (in-list base)] #:when (fhir? b)) (value->jsexpr b))
                                 r))
     (for ([t (in-list (rule-targets* r))]) (note-empty! t reason)))
+  ;; `check` must hold for every element the source selects, before its list mode picks among
+  ;; them (the reference's order: with `not_first` over one element that fails its check, an error)
+  (when (fml-source-check s)
+    (for ([e (in-list held)])
+      (unless (fp-true? (fml-source-check s) e (bind (with-candidate e) source-key e))
+        (rule-error r "check condition failed: ~a" (fhirpath->string (fml-fhirpath-ast (fml-source-check s)))))))
   (in-list-mode r s held))
 
 ;; source-values : rule source scope -> (listof value)   the context itself when the clause names no
@@ -533,9 +551,9 @@
         (check-primitive-target! r t slot v tr)
         (if (eq? v 'null)                               ; the rule matched; its value gave nothing
             (note-empty! t (empty-value (and (fhir? src-elem) (value->jsexpr src-elem))))
-            ((tslot-set! slot) (coerce v (tslot-prim slot))))]
+            ((tslot-set! slot) (coerce/checked r t v (tslot-prim slot))))]
     [(and implicit? (fml-target-element t) src-elem)
-     ((tslot-set! slot) (coerce (value->jsexpr src-elem) (tslot-prim slot)))]
+     ((tslot-set! slot) (coerce/checked r t (value->jsexpr src-elem) (tslot-prim slot)))]
     [else (void)])
   (if (fml-target-variable t) (bind sc (fml-target-variable t) slot) sc))
 

@@ -18,6 +18,7 @@ floor that only rises. `raco fml --tck` runs them with their reports.
 | HL7's own StructureMap examples (the R4 and R5 core packages and CRMI, when fhir-spec is installed; `tests/print-test.rkt`) | the same laws | 8/8 |
 | `check` over every corpus map | no error finding on maps that fit their structures | 55/58 |
 | the FHIR R3/R4 inter-version maps (FHIR/interversion, CI only, not vendored) | every map parses | 332/332 |
+| The validator's StructureMap engine (fhir-examples `value-experiment/reference/`; `tests/reference-test.rkt` holds what it found) | the tutorial's maps over its sources, and both changed in one small way: 887 pairs run by both engines; a third of the maps read, the rest only counted | the same result on 544 of the 606 held-out pairs (89.8%; 88.0% before the three fixes it led to), 271 of the 281 read (96.4%) |
 | The specification's forms and transforms (`tests/spec-test.rkt`, `tests/alignment-test.rkt`) | each form the specification gives is read, runs and is carried by the StructureMap; each transform of its table but `dateOp` does what its definition says; what is read beyond it is said | passes |
 | The guide (`tests/guide-test.rkt`) | every FML example in guide.md parses and checks clean; the cheat sheet and worked example give the results the text states; the quoted findings are the checker's | passes |
 | The manual (`tests/docs-test.rkt`) | scribblings/fml.scrbl renders with no broken reference to its own sections or bindings | passes |

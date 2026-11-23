@@ -362,3 +362,30 @@ each refactoring, every other difference one of the changes below. Tests 234 -> 
   rules, one that encoding. A map pinned to another FHIR version needs two towers in one process
   (the foundation registers types by name). The formal grammar wants two parameters to a group;
   one is read (the StructureMap allows it) and not remarked on.
+
+**Held to the validator's StructureMap engine** (2026-11-23; fhir-examples' value experiment H,
+part 2: its `value-experiment/PROTOCOL.md`, `reference/map-cases.rkt`, `map-reference.rkt`). The
+tutorial's 25 maps over its 18 sources, the sources changed in one way and the maps changed in one
+way (a rule removed, a list mode put on a source, a `where` added, a target's value replaced by a
+transform of it): 887 pairs run by this engine and by the validator jar's own (as a library, R5,
+no terminology server), a third of the maps the sample, the rest only counted. Held-out agreement
+88.0% -> 89.8%; the sample 92.5% -> 96.4%. Three defects of this engine, each with a case in
+`tests/reference-test.rkt` that fails without its fix:
+- **A text that is no number put into a number's element is an error at the rule**
+  (`coerce/checked`): `tgt.a21 = append(a, 'x')` gave an integer element the string "12345x", and a
+  source string copied into an integer element stayed a string — the tutorial's own step 4 says
+  it is an error. `coerce` still answers the value as it stands; the two places a target is set
+  check it.
+- **The implicit copy is the simple form's** (`run-rule-body` `implicit?`): `src.e as s -> tgt.e as
+  t then { }` copied the source value into `tgt.e`. A target that names a variable creates its
+  element and no more, as the reference's result shows; `src.x -> tgt.x` (and `src.x as v ->
+  tgt.x`) still copy.
+- **`check` is tested before the list mode** (`source-matches`): on every element the source
+  selects (after `where`), then the list mode picks. It was tested on what the list mode left.
+  The specification states no order; the reference's is followed.
+The reference's: a map whose FHIRPath names a variable with an underscore (`where
+(s_e.exists())`) is not read there. Open: a value that is no integer put into an integer element
+and then replaced is an error here at its rule, the last value there (its error comes when the
+result is written). 52 of the 606 held-out pairs differ under no class and are unread: eight
+sample maps do not stand for seventeen that each teach another feature. Floors unchanged: 6/6 +
+15/15, 43/43, 17/17, 37/37 (both ways), 29/37, 58/58, 21/31, 55/58, 58/58 + 25/25.
