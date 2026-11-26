@@ -124,3 +124,11 @@
 (check-regexp-match #rx"Failed to cast true to type \"integer\""
                     (run-matchbox "copyaliasingbug.map" "copyaliasingbug-source.json"
                                   (lambda (t) (string-replace t "tgtRes.active = true" "tgtRes.active = cast(true, 'integer')"))))
+
+;; a `types` group for a primitive type is the copy of every value of that type (the tutorial's
+;; step 1b): it was never run, the default copy taking the value as it stood
+(check-equal? (hash-ref (run "step1" "step1b.map" "source1.json"
+                             (lambda (t) (string-replace t "tgt.value = v" "tgt.value = append(v, 'x')")))
+                        'a)
+              "step1-demox")
+(check-equal? (hash-ref (run "step1" "step1b.map" "source1.json" values) 'a) "step1-demo")

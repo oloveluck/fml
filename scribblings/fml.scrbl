@@ -756,9 +756,6 @@ is @racketmodname[fml/workspace].
 @item{@bold{One transform is missing.} @tt{dateOp} is not implemented: the specification names it
 and leaves its inputs "to be documented". The check reports a rule that uses it, with the list of
 the ones there are. Date arithmetic is written in FHIRPath: @c{(d + 5 days)}.}
-@item{@bold{A @tt{types} group for a primitive type is not used.} A group declared for
-@tt{string} (or another primitive) with @tt{<<type+>>} is never chosen by the default copy of a
-primitive value: the value is copied as it is. Write the rule with its transform instead.}
 @item{@bold{One version of FHIR.} Maps run over FHIR R5. Data from another version is read as far
 as it fits, and the run names each value it could not read. An element R5 dropped (R4's
 @tt{Composition.code}) is not an element here. A map that names another version

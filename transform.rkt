@@ -187,6 +187,10 @@
 
 ;; child-slot! : parent elem [forced-type] -> a slot for one occurrence of parent.elem
 (define (child-slot! parent elem [forced-type #f])
+  (if (and (tslot-prim parent) (equal? elem "value"))
+      parent                                                ; a primitive's value is the primitive
+      (complex-child-slot! parent elem forced-type)))
+(define (complex-child-slot! parent elem forced-type)
   (define e (or (element-of (tslot-type parent) elem forced-type)
                 (element (string->symbol elem) #f (type-name->ty forced-type))))   ; not in the schema: open
   (define key (element-key e))
@@ -460,6 +464,8 @@
   (cond [(not (fml-source-element s)) (list context)]
         [(fhir? context) (let ([v (fhir-ref context (choice-field context (fml-source-element s)) '())])
                            (cond [(null? v) '()] [(list? v) v] [else (list v)]))]
+        ;; a primitive's `value` is the primitive (a `types` group for a primitive reads it so)
+        [(and (equal? (fml-source-element s) "value") (type-name-of context)) (list context)]
         [else '()]))
 
 ;; check-cardinality! : rule source count -> void   `min..max`: the element's cardinality in the
@@ -543,8 +549,15 @@
        (when (fml-target-share t) (hash-set! (scope-shares sc) (share-key t) s))
        s]))
   ;; a complex value with a `types` group for (its type, the element's type) runs that group
+  ;; … and a primitive with one for (its code, the element's code): `group string(source src :
+  ;; string, target tgt : string) <<type+>>` copies every string the map copies
   (define typed-source (match tr [(fml-var name) (lookup sc name)] [#f (and implicit? (fml-target-element t) src-elem)] [_ #f]))
-  (define group (and (fhir? typed-source) (tslot-type slot) (types-group c (fhir-type typed-source) (tslot-type slot))))
+  (define group (cond [(and (fhir? typed-source) (tslot-type slot)) (types-group c (fhir-type typed-source) (tslot-type slot))]
+                      ;; (not into the primitive's own `value`: that is what the group writes)
+                      [(and typed-source (not (fhir? typed-source)) (tslot-prim slot) (not (eq? slot context))
+                            (type-name-of typed-source))
+                       => (lambda (st) (primitive-types-group c st (tslot-prim slot)))]
+                      [else #f]))
   (cond
     [group (call-group c group (list typed-source slot) sc)]
     [tr (define v (match evaluated
@@ -584,6 +597,17 @@
                 (let ([ps (fml-group-params g)])
                   (and (eq? (type-sym c (fml-param-type (car ps))) st)
                        (eq? (type-sym c (fml-param-type (cadr ps))) tt)))))
+         (all-groups c)))
+
+;; primitive-types-group : ctx source-code target-code -> the `types`/`type+` group for two
+;; primitive types (its parameters typed `string`, `code` …), or #f
+(define (primitive-types-group c st tt)
+  (findf (lambda (g)
+           (and (pair? (fml-group-flags g))
+                (= 2 (length (fml-group-params g)))
+                (let ([ps (fml-group-params g)])
+                  (and (equal? (fml-param-type (car ps)) st)
+                       (equal? (fml-param-type (cadr ps)) tt)))))
          (all-groups c)))
 
 ;; ---- transforms: the catalogue as data --------------------------------------------

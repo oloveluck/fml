@@ -456,3 +456,12 @@ the two new nodes (`fp-desc`, `fp-new`): a rule variable inside `Coding { code: 
 like any other. A `.map` text's FHIRPath is this package's own grammar's, which inlines N1's
 cascade (FHIR R5's mapping language cites that FHIRPath) and does not read the new forms. Every
 corpus floor unchanged.
+
+**A `types` group for a primitive type is used** (2026-11-26; the gap the reference comparison
+named). `group string(source src : string, target tgt : string) <<type+>>` is the copy of every
+string a rule copies (the tutorial's step 1b): transform.rkt `run-element-target` looks one up by
+the primitive's code and the target element's (`primitive-types-group`), not for the primitive's
+own `value`, which the group writes (it recursed for ever until that guard); inside it `src.value`
+is the primitive (`source-values`) and `tgt.value` its slot (`child-slot!`). The default copy is
+unchanged where no such group exists. `tests/reference-test.rkt` has the case; every corpus floor
+held, the map comparisons too.
