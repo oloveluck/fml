@@ -448,3 +448,11 @@ same changes: 183 of 199 the same, before and after; 14 of the 16 differences ar
 `conformsTo()` class, two are under no class. Floors unchanged: 6/6 + 15/15, 43/43, 17/17,
 37/37 (both ways), 29/37, 58/58, 21/31, 55/58, 58/58 + 25/25; tests 326 -> 341. Still named,
 not fixed: the `types` group for a primitive type (ten of the tutorial set's held-out pairs).
+
+**FHIRPath 3.0.0's new forms** (2026-11-26; fhirpath/CLAUDE.md). fhirpath's parser reads 3.0.0
+(Long literals, `sort()` keys with `asc`/`desc`, instance selectors), and a StructureMap's
+expressions (JSON, `structuremap->fml`) are read by it, so `fp-parts`/`fp-map` (transform.rkt) walk
+the two new nodes (`fp-desc`, `fp-new`): a rule variable inside `Coding { code: v }` is rewritten
+like any other. A `.map` text's FHIRPath is this package's own grammar's, which inlines N1's
+cascade (FHIR R5's mapping language cites that FHIRPath) and does not read the new forms. Every
+corpus floor unchanged.

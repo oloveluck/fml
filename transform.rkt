@@ -43,7 +43,7 @@
          (only-in "structuremap.rkt" structuremap->fml)
          (only-in fhir/terminology/operations current-terminology-resolver)
          (only-in fhir/terminology/service translate/json make-terminology/resolver)
-         (only-in fhirpath/parser/ast fp-invoke fp-call fp-binop fp-unop fp-index fp-typeop fp-extern)
+         (only-in fhirpath/parser/ast fp-invoke fp-call fp-binop fp-unop fp-index fp-typeop fp-extern fp-desc fp-new)
          (only-in fhirpath/eval eval-fhirpath)
          (only-in fhirpath/functions function-known?)
          (only-in fhirpath/print fhirpath->string)
@@ -937,7 +937,8 @@
 
 ;; A FHIRPath AST (fhirpath/parser/ast) is, for the three walks here, one of:
 ;;   (fp-invoke target|#f name) | (fp-call target|#f name args) | (fp-binop op left right)
-;;   | (fp-unop op operand) | (fp-index target index) | (fp-typeop op operand type) | a leaf
+;;   | (fp-unop op operand) | (fp-index target index) | (fp-typeop op operand type)
+;;   | (fp-desc key) | (fp-new type elements) — FHIRPath 3.0.0's sort key and instance selector — | a leaf
 ;; fp-parts : ast -> (listof ast)   its sub-expressions
 (define (fp-parts ast)
   (match ast
@@ -947,6 +948,8 @@
     [(fp-unop _ o) (list o)]
     [(fp-index t i) (list t i)]
     [(fp-typeop _ o _) (list o)]
+    [(fp-desc k) (list k)]
+    [(fp-new _ elements) (map cdr elements)]
     [_ '()]))
 ;; unknown-functions : ast -> (listof string)   the functions an expression calls that FHIRPath
 ;; does not have (`a.isInteger()`): evaluated, such an expression gives nothing wherever it stands
@@ -965,6 +968,8 @@
     [(fp-unop op o) (fp-unop op (f o))]
     [(fp-index t i) (fp-index (f t) (f i))]
     [(fp-typeop op o ty) (fp-typeop op (f o) ty)]
+    [(fp-desc k) (fp-desc (f k))]
+    [(fp-new type elements) (fp-new type (for/list ([el (in-list elements)]) (cons (car el) (f (cdr el)))))]
     [_ ast]))
 
 ;; rewrite-vars : chain-head (fp-invoke #f name) with name bound in scope -> (fp-extern name)
